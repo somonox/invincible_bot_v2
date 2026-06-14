@@ -50,12 +50,17 @@ TETR.IO 및 로컬 환경에서 작동하는 고성능 4-Wide 테트리스 강�
 
 ### 1. 로컬 GUI 시뮬레이터 실행 (Rust)
 
-로컬에서 봇의 탐색 과정과 시뮬레이터를 GUI 환경에서 직접 시청하고 테스트할 수 있습니다.
+로컬에서 봇의 탐색 과정과 시뮬레이션을 GUI 환경에서 직접 시청하고 테스트할 수 있습니다. 두 가지 버전이 제공됩니다:
 
-```bash
-# GUI 실행 (Release 모드로 실행 시 부드럽게 작동합니다)
-cargo run --release
-```
+* **통합 대시보드 (싱글플레이어 / 트레이닝 / 배틀 통합)**:
+  ```bash
+  cargo run --release --bin four_wide_bot
+  ```
+
+* **1v1 봇 대전 전용 아레나 (두 봇의 4-Wide 난타전 관전 전용)**:
+  ```bash
+  cargo run --release --bin battle-gui
+  ```
 
 ### 2. TETR.IO 봇 클라이언트 실행 (Bun / TS)
 
