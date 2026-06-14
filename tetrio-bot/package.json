@@ -1,0 +1,11 @@
+{
+  "name": "tetrio-bot",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "bun run index.ts"
+  },
+  "dependencies": {
+    "@haelp/teto": "latest"
+  }
+}
