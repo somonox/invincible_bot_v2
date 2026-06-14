@@ -10,3 +10,7 @@ pub mod rl {
     pub mod features;
     pub mod agent;
 }
+
+pub mod gui {
+    pub mod widgets;
+}
