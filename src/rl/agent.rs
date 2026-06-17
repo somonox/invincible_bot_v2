@@ -2,6 +2,7 @@ use crate::engine::header::Move;
 use crate::engine::state::GameState;
 use crate::engine::movegen::generate_moves;
 use crate::rl::features::{Features, Weights};
+use crate::rl::meta_agent::MetaPolicyNetwork;
 use rand::Rng;
 use std::sync::OnceLock;
 
@@ -515,6 +516,294 @@ impl GeneticOptimizer {
         let mut new_std = [0.0f32; 15];
         let noise_level = 0.3f32; // exploration noise
         for i in 0..15 {
+            let mut variance_sum = 0.0;
+            for k in 0..elite_size {
+                let diff = elite_arrs[k][i] - new_mean[i];
+                variance_sum += diff * diff;
+            }
+            let std = (variance_sum / elite_size as f32).sqrt();
+            new_std[i] = std + noise_level;
+        }
+
+        self.mean = new_mean;
+        self.std_dev = new_std;
+        self.generation += 1;
+    }
+}
+
+pub fn evaluate_state_recursive_meta(
+    state: &GameState,
+    opponent_state: Option<&GameState>,
+    meta_net: &MetaPolicyNetwork,
+    current_depth: usize,
+    max_depth: usize,
+    tt: &mut TranspositionTable,
+) -> f32 {
+    if state.game_over {
+        return -100000.0;
+    }
+    if state.board.highest_row() == 0 {
+        let inputs = MetaPolicyNetwork::extract_inputs(state, opponent_state);
+        let weights = meta_net.forward(&inputs);
+        let feat = Features::evaluate_state(state, opponent_state);
+        return feat.dot_product(&weights);
+    }
+
+    let is_loud = state.combo > 0;
+    let quiescence_max_extensions = 2;
+
+    if current_depth >= max_depth {
+        if is_loud && current_depth < max_depth + quiescence_max_extensions {
+            // Extend search since combo is active
+        } else {
+            let inputs = MetaPolicyNetwork::extract_inputs(state, opponent_state);
+            let weights = meta_net.forward(&inputs);
+            let feat = Features::evaluate_state(state, opponent_state);
+            return feat.dot_product(&weights);
+        }
+    }
+
+    let hash = get_zobrist_keys().hash_state(state);
+    let remaining_depth = (max_depth as isize - current_depth as isize).max(0) as u8;
+    if remaining_depth > 0 {
+        if let Some(cached_score) = tt.probe(hash, remaining_depth) {
+            return cached_score;
+        }
+    }
+
+    let mut next_branches = get_all_next_states(state);
+    if next_branches.is_empty() {
+        return -50000.0; // Trapped
+    }
+
+    // Dynamic weights generation for sorting in beam search
+    let inputs = MetaPolicyNetwork::extract_inputs(state, opponent_state);
+    let weights = meta_net.forward(&inputs);
+
+    let beam_width = if current_depth >= max_depth {
+        2
+    } else if state.board.highest_row() <= 5 {
+        if current_depth <= 2 { 6 } else { 4 }
+    } else {
+        4
+    };
+    if next_branches.len() > beam_width {
+        next_branches.sort_by(|a, b| {
+            let score_a = Features::evaluate_state(&a.0, opponent_state).dot_product(&weights);
+            let score_b = Features::evaluate_state(&b.0, opponent_state).dot_product(&weights);
+            score_b.partial_cmp(&score_a).unwrap_or(std::cmp::Ordering::Equal)
+        });
+        next_branches.truncate(beam_width);
+    }
+
+    let mut best_score = f32::NEG_INFINITY;
+    for (sim_state, _, _) in next_branches {
+        let child_score = evaluate_state_recursive_meta(&sim_state, opponent_state, meta_net, current_depth + 1, max_depth, tt);
+        let reward = if sim_state.combo > 0 {
+            10000.0 * (sim_state.combo as f32)
+        } else {
+            0.0
+        };
+        let score = child_score + reward;
+        if score > best_score {
+            best_score = score;
+        }
+    }
+
+    if remaining_depth > 0 {
+        tt.store(hash, remaining_depth, best_score);
+    }
+    best_score
+}
+
+pub fn find_best_move_meta(
+    state: &GameState,
+    opponent_state: Option<&GameState>,
+    meta_net: &MetaPolicyNetwork,
+    depth: usize,
+) -> Option<(Move, bool)> {
+    let next_branches = get_all_next_states(state);
+    if next_branches.is_empty() {
+        return None;
+    }
+
+    // Pre-evaluate 1-ply scores for futility pruning at the root
+    let inputs = MetaPolicyNetwork::extract_inputs(state, opponent_state);
+    let weights = meta_net.forward(&inputs);
+
+    let mut evaluated_branches: Vec<(GameState, Move, bool, f32)> = next_branches
+        .into_iter()
+        .map(|(sim_state, m, used_hold)| {
+            let heuristic = Features::evaluate_state(&sim_state, opponent_state).dot_product(&weights);
+            let reward = if sim_state.combo > 0 {
+                10000.0 * (sim_state.combo as f32)
+            } else {
+                0.0
+            };
+            let score = heuristic + reward;
+            (sim_state, m, used_hold, score)
+        })
+        .collect();
+
+    let max_1ply = evaluated_branches
+        .iter()
+        .map(|x| x.3)
+        .fold(f32::NEG_INFINITY, f32::max);
+
+    let futility_delta = 40.0;
+    let cutoff = max_1ply - futility_delta;
+    evaluated_branches.retain(|x| x.3 >= cutoff);
+
+    evaluated_branches.sort_by(|a, b| b.3.partial_cmp(&a.3).unwrap_or(std::cmp::Ordering::Equal));
+
+    if evaluated_branches.len() > 12 {
+        evaluated_branches.truncate(12);
+    }
+
+    let mut best_score = f32::NEG_INFINITY;
+    let mut best_choice = None;
+
+    let mut tt = TranspositionTable::new(16384);
+
+    for (sim_state1, m, used_hold, _) in evaluated_branches {
+        let child_score = evaluate_state_recursive_meta(&sim_state1, opponent_state, meta_net, 1, depth, &mut tt);
+        let reward = if sim_state1.combo > 0 {
+            10000.0 * (sim_state1.combo as f32)
+        } else {
+            0.0
+        };
+        let score = child_score + reward;
+        if score > best_score {
+            best_score = score;
+            best_choice = Some((m, used_hold));
+        }
+    }
+
+    best_choice
+}
+
+pub struct MetaGeneticOptimizer {
+    pub mean: [f32; crate::rl::meta_agent::PARAM_COUNT],
+    pub std_dev: [f32; crate::rl::meta_agent::PARAM_COUNT],
+    pub generation: u32,
+    pub best_fitness: f32,
+    pub best_net: MetaPolicyNetwork,
+}
+
+impl MetaGeneticOptimizer {
+    pub fn new() -> Self {
+        let default_net = MetaPolicyNetwork::default();
+        let arr = default_net.to_array();
+        let std_dev = [0.5f32; crate::rl::meta_agent::PARAM_COUNT];
+
+        Self {
+            mean: arr,
+            std_dev,
+            generation: 0,
+            best_fitness: f32::NEG_INFINITY,
+            best_net: default_net,
+        }
+    }
+
+    pub fn evaluate_meta_agent(meta_net: &MetaPolicyNetwork, board_width: usize, num_games: usize) -> f32 {
+        let default_weights = Weights::default();
+        let mut total_score = 0.0;
+        let max_pieces = 150;
+
+        for _ in 0..num_games {
+            let mut state_meta = GameState::new(board_width);
+            let mut state_static = GameState::new(board_width);
+
+            let mut pieces_placed = 0;
+            let mut meta_wins = 0.0;
+
+            while !state_meta.game_over && !state_static.game_over && pieces_placed < max_pieces {
+                if let Some((best_move, use_hold)) = find_best_move_meta(&state_meta, Some(&state_static), meta_net, 3) {
+                    if use_hold {
+                        state_meta.hold();
+                    }
+                    state_meta.do_move_battle(best_move, &mut state_static);
+                } else {
+                    state_meta.game_over = true;
+                }
+
+                if !state_static.game_over {
+                    if let Some((best_move, use_hold)) = find_best_move(&state_static, Some(&state_meta), &default_weights, 3) {
+                        if use_hold {
+                            state_static.hold();
+                        }
+                        state_static.do_move_battle(best_move, &mut state_meta);
+                    } else {
+                        state_static.game_over = true;
+                    }
+                }
+
+                pieces_placed += 1;
+            }
+
+            if state_static.game_over && !state_meta.game_over {
+                meta_wins += 3000.0;
+            } else if state_meta.game_over && !state_static.game_over {
+                meta_wins -= 3000.0;
+            }
+
+            let attack_diff = (state_meta.score as f32) - (state_static.score as f32);
+            meta_wins += attack_diff * 0.1;
+            meta_wins += (state_meta.pieces_placed as f32) * 5.0;
+
+            if state_meta.game_over {
+                meta_wins -= 1000.0;
+            }
+
+            total_score += meta_wins;
+        }
+
+        total_score / num_games as f32
+    }
+
+    pub fn evolve(&mut self, board_width: usize, num_games_eval: usize) {
+        let pop_size = 12;
+        let elite_size = 3;
+        let mut rng = rand::thread_rng();
+
+        let mut candidates = Vec::new();
+        for _ in 0..pop_size {
+            let mut arr = [0.0f32; crate::rl::meta_agent::PARAM_COUNT];
+            for i in 0..crate::rl::meta_agent::PARAM_COUNT {
+                let u1: f32 = rng.gen::<f32>().max(1e-5);
+                let u2: f32 = rng.gen::<f32>();
+                let z0 = (-2.0 * u1.ln()).sqrt() * (2.0 * std::f32::consts::PI * u2).cos();
+                arr[i] = self.mean[i] + z0 * self.std_dev[i];
+            }
+            let net = MetaPolicyNetwork::from_array(arr);
+            let fitness = Self::evaluate_meta_agent(&net, board_width, num_games_eval);
+            candidates.push((net, fitness));
+        }
+
+        candidates.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+        if candidates[0].1 > self.best_fitness {
+            self.best_fitness = candidates[0].1;
+            self.best_net = candidates[0].0.clone();
+        }
+
+        let mut elite_arrs = Vec::new();
+        for i in 0..elite_size {
+            elite_arrs.push(candidates[i].0.to_array());
+        }
+
+        let mut new_mean = [0.0f32; crate::rl::meta_agent::PARAM_COUNT];
+        for i in 0..crate::rl::meta_agent::PARAM_COUNT {
+            let mut sum = 0.0;
+            for k in 0..elite_size {
+                sum += elite_arrs[k][i];
+            }
+            new_mean[i] = sum / elite_size as f32;
+        }
+
+        let mut new_std = [0.0f32; crate::rl::meta_agent::PARAM_COUNT];
+        let noise_level = 0.05f32;
+        for i in 0..crate::rl::meta_agent::PARAM_COUNT {
             let mut variance_sum = 0.0;
             for k in 0..elite_size {
                 let diff = elite_arrs[k][i] - new_mean[i];

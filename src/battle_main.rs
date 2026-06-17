@@ -14,6 +14,7 @@ pub mod engine {
 pub mod rl {
     pub mod features;
     pub mod agent;
+    pub mod meta_agent;
 }
 
 pub mod gui {
@@ -24,7 +25,8 @@ use crate::engine::board::BOARD_HEIGHT;
 use crate::engine::header::{Move, Piece, Rotation};
 use crate::engine::state::GameState;
 use crate::rl::features::Weights;
-use crate::rl::agent::find_best_move;
+use crate::rl::agent::{find_best_move, find_best_move_meta};
+use crate::rl::meta_agent::MetaPolicyNetwork;
 use crate::gui::widgets::{render_board, render_piece_preview, render_queue_preview};
 
 struct BattleApp {
@@ -55,7 +57,8 @@ struct BattleApp {
     bot_stuck_ticks: u32,
     last_bot_move_time: Instant,
     last_bot_step_time: Instant,
-    weights_a: Weights,
+    meta_net_a: MetaPolicyNetwork,
+    current_weights_a: Weights,
 
     // Bot B AI control
     bot_b_thinking: bool,
@@ -119,7 +122,8 @@ impl BattleApp {
             bot_stuck_ticks: 0,
             last_bot_move_time: Instant::now(),
             last_bot_step_time: Instant::now(),
-            weights_a: Weights::default(),
+            meta_net_a: MetaPolicyNetwork::new_random(),
+            current_weights_a: Weights::default(),
 
             bot_b_thinking: false,
             bot_b_result_rx: None,
@@ -263,13 +267,18 @@ impl BattleApp {
                     if !self.bot_thinking {
                         let state_clone = self.game_state.clone();
                         let opp_clone = self.game_state_b.clone();
-                        let weights_clone = self.weights_a.clone();
+                        
+                        // Dynamically evaluate weights for visualization
+                        let inputs = MetaPolicyNetwork::extract_inputs(&state_clone, Some(&opp_clone));
+                        self.current_weights_a = self.meta_net_a.forward(&inputs);
+
+                        let meta_net_clone = self.meta_net_a.clone();
                         let depth = self.lookahead_depth;
                         let (tx, rx) = channel();
                         self.bot_result_rx = Some(rx);
                         self.bot_thinking = true;
                         thread::spawn(move || {
-                            let res = find_best_move(&state_clone, Some(&opp_clone), &weights_clone, depth);
+                            let res = find_best_move_meta(&state_clone, Some(&opp_clone), &meta_net_clone, depth);
                             let _ = tx.send(res);
                         });
                     }
@@ -400,13 +409,18 @@ impl BattleApp {
                 if !self.bot_thinking {
                     let state_clone = self.game_state.clone();
                     let opp_clone = self.game_state_b.clone();
-                    let weights_clone = self.weights_a.clone();
+
+                    // Dynamically evaluate weights for visualization
+                    let inputs = MetaPolicyNetwork::extract_inputs(&state_clone, Some(&opp_clone));
+                    self.current_weights_a = self.meta_net_a.forward(&inputs);
+
+                    let meta_net_clone = self.meta_net_a.clone();
                     let depth = self.lookahead_depth;
                     let (tx, rx) = channel();
                     self.bot_result_rx = Some(rx);
                     self.bot_thinking = true;
                     thread::spawn(move || {
-                        let res = find_best_move(&state_clone, Some(&opp_clone), &weights_clone, depth);
+                        let res = find_best_move_meta(&state_clone, Some(&opp_clone), &meta_net_clone, depth);
                         let _ = tx.send(res);
                     });
                 }
@@ -825,6 +839,46 @@ impl eframe::App for BattleApp {
 
             ui.add_space(15.0);
 
+            // Dynamic Weights Grid
+            ui.heading("🧠 Meta-Agent Dynamic Weights (Bot A)");
+            ui.separator();
+            ui.group(|ui| {
+                ui.label(egui::RichText::new("Comparing Bot A (Meta-Agent, dynamic) vs Bot B (Static Agent, fixed)").italics().color(Color32::GRAY));
+                ui.add_space(5.0);
+                egui::Grid::new("weights_grid").striped(true).show(ui, |ui| {
+                    ui.label(egui::RichText::new("Feature").strong());
+                    ui.label(egui::RichText::new("Bot A (Dynamic)").strong());
+                    ui.label(egui::RichText::new("Bot B (Static)").strong());
+                    ui.end_row();
+
+                    let w_a = self.current_weights_a.to_array();
+                    let w_b = self.weights_b.to_array();
+                    let names = [
+                        "Holes", "Cell Coveredness", "Height Max", "Height Avg",
+                        "Bumpiness", "Row Transitions", "Col Transitions", "Well Depth",
+                        "4-Wide Well", "Combo Reward", "Opp Height Max", "Opp Holes",
+                        "Opp Pending Garbage", "Own Pending Garbage", "Own Queued Garbage"
+                    ];
+
+                    for i in 0..15 {
+                        ui.label(names[i]);
+                        let diff = w_a[i] - w_b[i];
+                        let color = if diff.abs() < 0.01 {
+                            Color32::GRAY
+                        } else if diff > 0.0 {
+                            Color32::from_rgb(52, 211, 153) // Green for higher
+                        } else {
+                            Color32::from_rgb(248, 113, 113) // Red for lower
+                        };
+                        ui.label(egui::RichText::new(format!("{:.2}", w_a[i])).color(color));
+                        ui.label(format!("{:.2}", w_b[i]));
+                        ui.end_row();
+                    }
+                });
+            });
+
+            ui.add_space(15.0);
+
             // Battle Log History
             ui.heading("📜 Recent Matches");
             ui.separator();
@@ -844,9 +898,9 @@ impl eframe::App for BattleApp {
 fn main() -> eframe::Result<()> {
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([960.0, 680.0])
+            .with_inner_size([1100.0, 850.0])
             .with_title("Antigravity 1v1 Bot Battle Arena")
-            .with_min_inner_size([880.0, 600.0]),
+            .with_min_inner_size([1000.0, 750.0]),
         ..Default::default()
     };
 
