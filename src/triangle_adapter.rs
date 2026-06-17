@@ -33,8 +33,8 @@ use crate::engine::board::{Board, BOARD_HEIGHT};
 use crate::engine::header::{Move, Piece, Rotation};
 use crate::engine::movegen::generate_moves;
 use crate::engine::state::GameState;
-use crate::rl::agent::find_best_move;
-use crate::rl::features::Weights;
+use crate::rl::agent::find_best_move_meta;
+use crate::rl::meta_agent::MetaPolicyNetwork;
 
 /// Convert a piece symbol string ("T", "I", etc.) to our Piece enum.
 fn piece_from_str(s: &str) -> Option<Piece> {
@@ -346,8 +346,23 @@ fn main() {
     }));
 
     let mut board_width: usize = 4;
-    let weights = Weights::default();
-    let lookahead_depth: usize = 4;
+    let meta_net = if std::path::Path::new("meta_net.json").exists() {
+        if let Ok(file_content) = std::fs::read_to_string("meta_net.json") {
+            if let Ok(net) = serde_json::from_str::<MetaPolicyNetwork>(&file_content) {
+                eprintln!("[4wide-bot] Successfully loaded trained MetaPolicyNetwork from meta_net.json");
+                net
+            } else {
+                eprintln!("[4wide-bot] Failed to parse meta_net.json. Using default MetaPolicyNetwork.");
+                MetaPolicyNetwork::default()
+            }
+        } else {
+            MetaPolicyNetwork::default()
+        }
+    } else {
+        eprintln!("[4wide-bot] meta_net.json not found. Using default MetaPolicyNetwork (baseline).");
+        MetaPolicyNetwork::default()
+    };
+    let lookahead_depth: usize = 6;
     let mut last_state: Option<Value> = None;
 
     // Main message loop
@@ -398,7 +413,7 @@ fn main() {
                     let game_state = build_state_from_protocol(state_msg, board_width);
 
                     let search_start = std::time::Instant::now();
-                    let result = find_best_move(&game_state, None, &weights, lookahead_depth);
+                    let result = find_best_move_meta(&game_state, None, &meta_net, lookahead_depth);
                     let search_duration = search_start.elapsed();
 
                     let mut path_duration = std::time::Duration::from_secs(0);

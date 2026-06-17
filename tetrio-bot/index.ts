@@ -74,6 +74,37 @@ console.log("[4wide-bot] Waiting for room invite...");
 // Set initial online status
 client.social.status("online", "menus");
 
+let currentPps = 2.0;
+let activeWrapper: any = null;
+
+// Listen to room chat for command handling
+client.on("room.chat", async (chat) => {
+  if (chat.system) return;
+  if (chat.user._id === client.user.id) return;
+
+  const content = chat.content.trim();
+  if (content.toLowerCase().startsWith("!pps")) {
+    const parts = content.split(/\s+/);
+    if (parts.length >= 2) {
+      const ppsVal = parseFloat(parts[1]);
+      if (!isNaN(ppsVal) && ppsVal >= 0.1 && ppsVal <= 10.0) {
+        currentPps = ppsVal;
+        if (activeWrapper) {
+          activeWrapper.config.pps = ppsVal;
+        }
+        await client.room?.chat(`PPS updated to ${ppsVal}`).catch((err) => {
+          console.error("[4wide-bot] Failed to send chat message:", err);
+        });
+        console.log(`[4wide-bot] PPS updated to ${ppsVal} by ${chat.user.username}`);
+      } else {
+        await client.room?.chat("Invalid PPS value. Please enter a number between 0.1 and 10.0.").catch(() => {});
+      }
+    } else {
+      await client.room?.chat(`Current PPS is ${currentPps}`).catch(() => {});
+    }
+  }
+});
+
 // Persistent round start listener
 client.on("client.game.round.start", async ([tick, engine]) => {
   if (client.room?.self?.bracket !== "player") {
@@ -89,8 +120,9 @@ client.on("client.game.round.start", async ([tick, engine]) => {
   });
 
   const wrapper = new BotWrapper(adapter, {
-    pps: 2,
+    pps: currentPps,
   });
+  activeWrapper = wrapper;
 
   const initPromise = wrapper.init(engine);
 
@@ -113,6 +145,7 @@ client.on("client.game.round.start", async ([tick, engine]) => {
   console.log("[4wide-bot] Round over.");
   client.social.status("online", "lobby:X-PRIV");
   wrapper.stop();
+  activeWrapper = null;
 });
 
 // Main loop for joining rooms
