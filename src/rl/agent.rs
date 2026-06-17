@@ -742,9 +742,9 @@ impl MetaGeneticOptimizer {
             }
 
             if state_static.game_over && !state_meta.game_over {
-                meta_wins += 3000.0;
+                meta_wins += 500.0;
             } else if state_meta.game_over && !state_static.game_over {
-                meta_wins -= 3000.0;
+                meta_wins -= 500.0;
             }
 
             let attack_diff = (state_meta.score as f32) - (state_static.score as f32);
@@ -752,7 +752,7 @@ impl MetaGeneticOptimizer {
             meta_wins += (state_meta.pieces_placed as f32) * 5.0;
 
             if state_meta.game_over {
-                meta_wins -= 1000.0;
+                meta_wins -= 200.0;
             }
 
             total_score += meta_wins;
@@ -802,7 +802,7 @@ impl MetaGeneticOptimizer {
         }
 
         let mut new_std = [0.0f32; crate::rl::meta_agent::PARAM_COUNT];
-        let noise_level = 0.05f32;
+        let noise_level = 0.25f32;
         for i in 0..crate::rl::meta_agent::PARAM_COUNT {
             let mut variance_sum = 0.0;
             for k in 0..elite_size {
