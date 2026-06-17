@@ -143,11 +143,24 @@ async function runWorkerForRoom(roomid: string) {
       }
     };
 
+    const checkRoomEmptyAndLeave = async () => {
+      if (!client || !client.room) return;
+      const otherPlayers = client.room.players.filter((p) => p._id !== client!.user.id);
+      if (otherPlayers.length === 0) {
+        console.log(`[Worker-${roomid}] No other players left in the room. Leaving room...`);
+        await client.room.leave().catch((err) => {
+          console.error(`[Worker-${roomid}] Failed to leave room:`, err);
+        });
+      }
+    };
+
     // Check config immediately upon joining
     await checkRoomConfigAndBracket();
+    await checkRoomEmptyAndLeave();
 
     const onRoomUpdate = async () => {
       await checkRoomConfigAndBracket();
+      await checkRoomEmptyAndLeave();
     };
 
     const onRoomUpdateBracket = async (data: { uid: string }) => {
@@ -158,6 +171,9 @@ async function runWorkerForRoom(roomid: string) {
 
     client.on("room.update", onRoomUpdate);
     client.on("room.update.bracket", onRoomUpdateBracket);
+    client.on("room.player.remove", () => {
+      setTimeout(checkRoomEmptyAndLeave, 0);
+    });
 
     // Listen to room chat for command handling
     client.on("room.chat", async (chat) => {
