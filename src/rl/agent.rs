@@ -234,15 +234,25 @@ pub fn evaluate_state_recursive(
         let feat = Features::evaluate_state(state, opponent_state);
         return feat.dot_product(weights);
     }
+
+    let is_loud = state.combo > 0;
+    let quiescence_max_extensions = 2;
+
     if current_depth >= max_depth {
-        let feat = Features::evaluate_state(state, opponent_state);
-        return feat.dot_product(weights);
+        if is_loud && current_depth < max_depth + quiescence_max_extensions {
+            // Extend search since combo is active
+        } else {
+            let feat = Features::evaluate_state(state, opponent_state);
+            return feat.dot_product(weights);
+        }
     }
 
     let hash = get_zobrist_keys().hash_state(state);
-    let remaining_depth = (max_depth - current_depth) as u8;
-    if let Some(cached_score) = tt.probe(hash, remaining_depth) {
-        return cached_score;
+    let remaining_depth = (max_depth as isize - current_depth as isize).max(0) as u8;
+    if remaining_depth > 0 {
+        if let Some(cached_score) = tt.probe(hash, remaining_depth) {
+            return cached_score;
+        }
     }
 
     let mut next_branches = get_all_next_states(state);
@@ -252,7 +262,9 @@ pub fn evaluate_state_recursive(
 
     // Apply Beam Search pruning to prevent exponential branching growth
     // Sort moves by 1-ply heuristic score and keep candidates
-    let beam_width = if state.board.highest_row() <= 5 {
+    let beam_width = if current_depth >= max_depth {
+        2 // Narrow beam for quiescence extensions
+    } else if state.board.highest_row() <= 5 {
         if current_depth <= 2 { 6 } else { 4 }
     } else {
         4
@@ -280,7 +292,9 @@ pub fn evaluate_state_recursive(
         }
     }
 
-    tt.store(hash, remaining_depth, best_score);
+    if remaining_depth > 0 {
+        tt.store(hash, remaining_depth, best_score);
+    }
     best_score
 }
 
@@ -297,12 +311,46 @@ pub fn find_best_move(
         return None;
     }
 
+    // Pre-evaluate 1-ply scores for futility pruning at the root
+    let mut evaluated_branches: Vec<(GameState, Move, bool, f32)> = next_branches
+        .into_iter()
+        .map(|(sim_state, m, used_hold)| {
+            let heuristic = Features::evaluate_state(&sim_state, opponent_state).dot_product(weights);
+            let reward = if sim_state.combo > 0 {
+                10000.0 * (sim_state.combo as f32)
+            } else {
+                0.0
+            };
+            let score = heuristic + reward;
+            (sim_state, m, used_hold, score)
+        })
+        .collect();
+
+    // Find the maximum 1-ply score
+    let max_1ply = evaluated_branches
+        .iter()
+        .map(|x| x.3)
+        .fold(f32::NEG_INFINITY, f32::max);
+
+    // Prune branches that are way worse than the best 1-ply move
+    let futility_delta = 40.0;
+    let cutoff = max_1ply - futility_delta;
+    evaluated_branches.retain(|x| x.3 >= cutoff);
+
+    // Sort the remaining branches by 1-ply score (descending)
+    evaluated_branches.sort_by(|a, b| b.3.partial_cmp(&a.3).unwrap_or(std::cmp::Ordering::Equal));
+
+    // Limit maximum root branches to 12 to bound worst-case search complexity
+    if evaluated_branches.len() > 12 {
+        evaluated_branches.truncate(12);
+    }
+
     let mut best_score = f32::NEG_INFINITY;
     let mut best_choice = None;
 
     let mut tt = TranspositionTable::new(16384);
 
-    for (sim_state1, m, used_hold) in next_branches {
+    for (sim_state1, m, used_hold, _) in evaluated_branches {
         let child_score = evaluate_state_recursive(&sim_state1, opponent_state, weights, 1, depth, &mut tt);
         let reward = if sim_state1.combo > 0 {
             10000.0 * (sim_state1.combo as f32)

@@ -30,3 +30,6 @@ target/
 .env
 .env.local
 .env.*.local
+
+# Temp clone of fusion
+fusion_temp/

@@ -346,7 +346,7 @@ fn main() {
 
     let mut board_width: usize = 4;
     let weights = Weights::default();
-    let lookahead_depth: usize = 6;
+    let lookahead_depth: usize = 4;
     let mut last_state: Option<Value> = None;
 
     // Main message loop
