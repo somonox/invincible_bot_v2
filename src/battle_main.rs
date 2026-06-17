@@ -363,9 +363,7 @@ impl BattleApp {
                         }
 
                         if self.active_x == target.x && self.active_rot == target.rotation {
-                            if self.active_y > target.y {
-                                self.active_y -= 1;
-                            }
+                            self.active_y = target.y; // Hard drop!
                         }
 
                         let current_state = (self.active_x, self.active_y, self.active_rot);
@@ -501,9 +499,7 @@ impl BattleApp {
                         }
 
                         if self.active_x_b == target.x && self.active_rot_b == target.rotation {
-                            if self.active_y_b > target.y {
-                                self.active_y_b -= 1;
-                            }
+                            self.active_y_b = target.y; // Hard drop!
                         }
 
                         let current_state = (self.active_x_b, self.active_y_b, self.active_rot_b);
