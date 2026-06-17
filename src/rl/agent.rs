@@ -650,7 +650,7 @@ pub fn find_best_move_meta(
         .map(|x| x.3)
         .fold(f32::NEG_INFINITY, f32::max);
 
-    let futility_delta = 40.0;
+    let futility_delta = 150.0;
     let cutoff = max_1ply - futility_delta;
     evaluated_branches.retain(|x| x.3 >= cutoff);
 
@@ -718,7 +718,7 @@ impl MetaGeneticOptimizer {
             let mut meta_wins = 0.0;
 
             while !state_meta.game_over && !state_static.game_over && pieces_placed < max_pieces {
-                if let Some((best_move, use_hold)) = find_best_move_meta(&state_meta, Some(&state_static), meta_net, 3) {
+                if let Some((best_move, use_hold)) = find_best_move_meta(&state_meta, Some(&state_static), meta_net, 5) {
                     if use_hold {
                         state_meta.hold();
                     }
@@ -728,7 +728,7 @@ impl MetaGeneticOptimizer {
                 }
 
                 if !state_static.game_over {
-                    if let Some((best_move, use_hold)) = find_best_move(&state_static, Some(&state_meta), &default_weights, 3) {
+                    if let Some((best_move, use_hold)) = find_best_move(&state_static, Some(&state_meta), &default_weights, 5) {
                         if use_hold {
                             state_static.hold();
                         }
