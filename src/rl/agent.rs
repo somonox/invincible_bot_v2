@@ -684,7 +684,10 @@ pub fn find_best_move_meta(
 
 pub struct MetaGeneticOptimizer {
     pub mean: [f32; crate::rl::meta_agent::PARAM_COUNT],
-    pub std_dev: [f32; crate::rl::meta_agent::PARAM_COUNT],
+    pub std_dev: [f32; crate::rl::meta_agent::PARAM_COUNT], // standard deviation (sqrt of diagonal of covariance C)
+    pub p_sigma: [f32; crate::rl::meta_agent::PARAM_COUNT], // step-size evolution path
+    pub p_c: [f32; crate::rl::meta_agent::PARAM_COUNT],     // covariance evolution path
+    pub sigma: f32,                                         // global step-size
     pub generation: u32,
     pub best_fitness: f32,
     pub best_net: MetaPolicyNetwork,
@@ -699,6 +702,9 @@ impl MetaGeneticOptimizer {
         Self {
             mean: arr,
             std_dev,
+            p_sigma: [0.0f32; crate::rl::meta_agent::PARAM_COUNT],
+            p_c: [0.0f32; crate::rl::meta_agent::PARAM_COUNT],
+            sigma: 0.5f32,
             generation: 0,
             best_fitness: f32::NEG_INFINITY,
             best_net: default_net,
@@ -766,55 +772,112 @@ impl MetaGeneticOptimizer {
         let elite_size = 3;
         let mut rng = rand::thread_rng();
 
-        let mut candidates = Vec::new();
+        // 1. Recombination weights w_i and constants
+        let w = [0.63704f32, 0.28457f32, 0.07839f32];
+        let mu_eff = 2.0286f32;
+        let n_f32 = crate::rl::meta_agent::PARAM_COUNT as f32;
+
+        let c_sigma = (mu_eff + 2.0) / (n_f32 + mu_eff + 3.0);
+        let c_c = 3.0 / n_f32;
+        let c_1 = 1.0 / n_f32;
+        let c_mu = mu_eff / n_f32;
+        let d_sigma = 1.0 + c_sigma + 2.0 * (0.0f32.max((mu_eff - 1.0).sqrt() - 1.0));
+        let chi_n = n_f32.sqrt() * (1.0 - 1.0 / (4.0 * n_f32) + 1.0 / (21.0 * n_f32 * n_f32));
+
+        // 2. Sample candidates using Box-Muller transform for standard normals
+        let mut candidates = Vec::new(); // stores (net, random_z_vector, fitness)
         for _ in 0..pop_size {
+            let mut z = [0.0f32; crate::rl::meta_agent::PARAM_COUNT];
             let mut arr = [0.0f32; crate::rl::meta_agent::PARAM_COUNT];
-            for i in 0..crate::rl::meta_agent::PARAM_COUNT {
+
+            for i in (0..crate::rl::meta_agent::PARAM_COUNT).step_by(2) {
                 let u1: f32 = rng.gen::<f32>().max(1e-5);
                 let u2: f32 = rng.gen::<f32>();
-                let z0 = (-2.0 * u1.ln()).sqrt() * (2.0 * std::f32::consts::PI * u2).cos();
-                arr[i] = self.mean[i] + z0 * self.std_dev[i];
+                let r = (-2.0 * u1.ln()).sqrt();
+                let theta = 2.0 * std::f32::consts::PI * u2;
+
+                let z0 = r * theta.cos();
+                z[i] = z0;
+                arr[i] = self.mean[i] + self.sigma * self.std_dev[i] * z0;
+
+                if i + 1 < crate::rl::meta_agent::PARAM_COUNT {
+                    let z1 = r * theta.sin();
+                    z[i + 1] = z1;
+                    arr[i + 1] = self.mean[i + 1] + self.sigma * self.std_dev[i + 1] * z1;
+                }
             }
+
             let net = MetaPolicyNetwork::from_array(arr);
             let fitness = Self::evaluate_meta_agent(&net, board_width, num_games_eval);
-            candidates.push((net, fitness));
+            candidates.push((net, z, fitness));
         }
 
-        candidates.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        // 3. Sort candidates by fitness (descending)
+        candidates.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
 
-        if candidates[0].1 > self.best_fitness {
-            self.best_fitness = candidates[0].1;
+        // 4. Update best network tracking
+        if candidates[0].2 > self.best_fitness {
+            self.best_fitness = candidates[0].2;
             self.best_net = candidates[0].0.clone();
         }
 
-        let mut elite_arrs = Vec::new();
-        for i in 0..elite_size {
-            elite_arrs.push(candidates[i].0.to_array());
+        // 5. Compute weighted average of z vectors (z_w)
+        let mut z_w = [0.0f32; crate::rl::meta_agent::PARAM_COUNT];
+        for j in 0..crate::rl::meta_agent::PARAM_COUNT {
+            let mut sum = 0.0f32;
+            for i in 0..elite_size {
+                sum += w[i] * candidates[i].1[j];
+            }
+            z_w[j] = sum;
         }
 
+        // 6. Compute weighted average of steps (y_w)
+        let mut y_w = [0.0f32; crate::rl::meta_agent::PARAM_COUNT];
+        for j in 0..crate::rl::meta_agent::PARAM_COUNT {
+            y_w[j] = self.std_dev[j] * z_w[j];
+        }
+
+        // 7. Update mean: mean_new = mean + sigma * y_w
         let mut new_mean = [0.0f32; crate::rl::meta_agent::PARAM_COUNT];
-        for i in 0..crate::rl::meta_agent::PARAM_COUNT {
-            let mut sum = 0.0;
-            for k in 0..elite_size {
-                sum += elite_arrs[k][i];
-            }
-            new_mean[i] = sum / elite_size as f32;
+        for j in 0..crate::rl::meta_agent::PARAM_COUNT {
+            new_mean[j] = self.mean[j] + self.sigma * y_w[j];
         }
-
-        let mut new_std = [0.0f32; crate::rl::meta_agent::PARAM_COUNT];
-        let noise_level = 0.25f32;
-        for i in 0..crate::rl::meta_agent::PARAM_COUNT {
-            let mut variance_sum = 0.0;
-            for k in 0..elite_size {
-                let diff = elite_arrs[k][i] - new_mean[i];
-                variance_sum += diff * diff;
-            }
-            let std = (variance_sum / elite_size as f32).sqrt();
-            new_std[i] = std + noise_level;
-        }
-
         self.mean = new_mean;
-        self.std_dev = new_std;
+
+        // 8. Update evolution paths
+        let hs_sigma = (c_sigma * (2.0 - c_sigma) * mu_eff).sqrt();
+        let mut norm_p_sigma_sq = 0.0f32;
+        for j in 0..crate::rl::meta_agent::PARAM_COUNT {
+            self.p_sigma[j] = (1.0 - c_sigma) * self.p_sigma[j] + hs_sigma * z_w[j];
+            norm_p_sigma_sq += self.p_sigma[j] * self.p_sigma[j];
+        }
+        let norm_p_sigma = norm_p_sigma_sq.sqrt();
+
+        let hs_c = (c_c * (2.0 - c_c) * mu_eff).sqrt();
+        for j in 0..crate::rl::meta_agent::PARAM_COUNT {
+            self.p_c[j] = (1.0 - c_c) * self.p_c[j] + hs_c * y_w[j];
+        }
+
+        // 9. Update global step-size sigma
+        self.sigma = self.sigma * ((c_sigma / d_sigma) * (norm_p_sigma / chi_n - 1.0)).exp();
+        self.sigma = self.sigma.clamp(0.01f32, 5.0f32); // prevent divergence or underflow
+
+        // 10. Update diagonal covariance C (std_dev = sqrt(C))
+        for j in 0..crate::rl::meta_agent::PARAM_COUNT {
+            let current_var = self.std_dev[j] * self.std_dev[j];
+
+            let mut sum_w_z_sq = 0.0f32;
+            for i in 0..elite_size {
+                sum_w_z_sq += w[i] * candidates[i].1[j] * candidates[i].1[j];
+            }
+
+            let mut new_var = current_var * (1.0 - c_1 - c_mu + c_mu * sum_w_z_sq) + c_1 * self.p_c[j] * self.p_c[j];
+
+            // Variance clamp to keep exploration stable
+            new_var = new_var.clamp(0.0025f32, 4.0f32); // std_dev clamp: [0.05, 2.0]
+            self.std_dev[j] = new_var.sqrt();
+        }
+
         self.generation += 1;
     }
 }
