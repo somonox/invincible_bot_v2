@@ -73,6 +73,15 @@ console.log(`[4wide-bot] Master client logged in as: ${masterClient.user.usernam
 console.log("[4wide-bot] Master client waiting for room invites...");
 masterClient.social.status("online", "menus");
 
+// Friend back anyone who friends the bot
+(masterClient as any).on("client.friended", async (friend: { id: string; name: string }) => {
+  console.log(`[4wide-bot] Received friend request from ${friend.name} (${friend.id}). Friending back...`);
+  await masterClient.social.friend(friend.id).catch((err) => {
+    console.error(`[4wide-bot] Failed to friend back ${friend.name}:`, err);
+  });
+});
+
+
 const MAX_WORKERS = 10;
 let activeWorkersCount = 0;
 let defaultPps = 2.0;
