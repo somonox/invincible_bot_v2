@@ -64,120 +64,79 @@ BotWrapper.prototype.tick = async function (this: any, engine: any, events: any,
 };
 
 
-const client = await Client.create({
+const masterClient = await Client.create({
   username: process.env.BOT_USERNAME!,
   password: process.env.BOT_PASSWORD!,
 });
 
-console.log(`[4wide-bot] Logged in as: ${client.user.username} (ID: ${client.user.id})`);
-console.log("[4wide-bot] Waiting for room invite...");
-// Set initial online status
-client.social.status("online", "menus");
+console.log(`[4wide-bot] Master client logged in as: ${masterClient.user.username} (ID: ${masterClient.user.id})`);
+console.log("[4wide-bot] Master client waiting for room invites...");
+masterClient.social.status("online", "menus");
 
-let currentPps = 2.0;
-let activeWrapper: any = null;
+const MAX_WORKERS = 10;
+let activeWorkersCount = 0;
+let defaultPps = 2.0;
 
-// Listen to room chat for command handling
-client.on("room.chat", async (chat) => {
-  if (chat.system) return;
-  if (chat.user._id === client.user.id) return;
+masterClient.on("social.invite", async (invite) => {
+  const roomid = invite.roomid;
+  const sender = invite.sender;
 
-  const content = chat.content.trim();
-  if (content.toLowerCase().startsWith("!pps")) {
-    const parts = content.split(/\s+/);
-    if (parts.length >= 2) {
-      const ppsVal = parseFloat(parts[1]);
-      if (!isNaN(ppsVal) && ppsVal >= 0.1 && ppsVal <= 10.0) {
-        currentPps = ppsVal;
-        if (activeWrapper) {
-          activeWrapper.config.pps = ppsVal;
-        }
-        await client.room?.chat(`PPS updated to ${ppsVal}`).catch((err) => {
-          console.error("[4wide-bot] Failed to send chat message:", err);
-        });
-        console.log(`[4wide-bot] PPS updated to ${ppsVal} by ${chat.user.username}`);
-      } else {
-        await client.room?.chat("Invalid PPS value. Please enter a number between 0.1 and 10.0.").catch(() => {});
-      }
-    } else {
-      await client.room?.chat(`Current PPS is ${currentPps}`).catch(() => {});
-    }
-  }
-});
-
-// Persistent round start listener
-client.on("client.game.round.start", async ([tick, engine]) => {
-  if (client.room?.self?.bracket !== "player") {
-    console.log("[4wide-bot] Game started, but bot is in spectator bracket. Ignoring.");
+  if (activeWorkersCount >= MAX_WORKERS) {
+    console.log(`[4wide-bot] Received invite to room ${roomid} from ${sender}, but worker pool is full (${activeWorkersCount}/${MAX_WORKERS}). Rejecting.`);
+    await masterClient.social.dm(sender, `Sorry, all bot worker slots are currently full (${MAX_WORKERS}/${MAX_WORKERS}). Please try again later!`).catch((err) => {
+      console.error("[4wide-bot] Failed to send DM to sender:", err);
+    });
     return;
   }
-  console.log("[4wide-bot] Round started!");
-  client.social.status("online", "lobby_ig:X-PRIV");
 
-  const adapter = new adapters.IO({
-    path: path.join((import.meta as any).dir, "../target/release/triangle-adapter"),
-    verbose: false,
+  activeWorkersCount++;
+  console.log(`[4wide-bot] [Worker Assigned] Joining room ${roomid}. Active workers: ${activeWorkersCount}/${MAX_WORKERS}`);
+
+  runWorkerForRoom(roomid).finally(() => {
+    activeWorkersCount--;
+    console.log(`[4wide-bot] [Worker Released] Left room ${roomid}. Active workers: ${activeWorkersCount}/${MAX_WORKERS}`);
   });
-
-  const wrapper = new BotWrapper(adapter, {
-    pps: currentPps,
-  });
-  activeWrapper = wrapper;
-
-  const initPromise = wrapper.init(engine);
-
-  let isReady = false;
-  initPromise.then(() => {
-    isReady = true;
-  });
-
-  tick(async ({ engine, events }) => {
-    if (!isReady) {
-      return { keys: [] };
-    }
-    adapter.update(engine);
-    return {
-      keys: await wrapper.tick(engine, events),
-    };
-  });
-
-  await client.wait("client.game.over");
-  console.log("[4wide-bot] Round over.");
-  client.social.status("online", "lobby:X-PRIV");
-  wrapper.stop();
-  activeWrapper = null;
 });
 
-// Main loop for joining rooms
-while (true) {
-  try {
-    const { roomid } = await client.wait("social.invite");
-    console.log(`[4wide-bot] Invited to room ${roomid}, joining...`);
+async function runWorkerForRoom(roomid: string) {
+  let client: Client | null = null;
+  let wrapper: any = null;
+  let roomPps = defaultPps;
 
+  try {
+    // 1. Create a new client connection for this room worker
+    client = await Client.create({
+      username: process.env.BOT_USERNAME!,
+      password: process.env.BOT_PASSWORD!,
+    });
+
+    client.social.status("online", "lobby:X-PRIV");
+
+    // 2. Join the room
     const room = await client.rooms.join(roomid);
-    console.log(`[4wide-bot] Joined room: ${room.name} (${room.id})`);
+    console.log(`[Worker-${roomid}] Joined room: ${room.name} (${room.id})`);
     client.social.status("online", "lobby:X-PRIV");
 
     const checkRoomConfigAndBracket = async () => {
-      if (!client.room) return;
+      if (!client || !client.room) return;
       const currentRoom = client.room;
       const boardWidth = currentRoom.options?.boardwidth;
       const is4Wide = boardWidth === 4;
-      const selfPlayer = currentRoom.players.find((p) => p._id === client.user.id);
+      const selfPlayer = currentRoom.players.find((p) => p._id === client!.user.id);
       const currentBracket = selfPlayer?.bracket;
 
       if (is4Wide) {
         if (currentBracket !== "player") {
-          console.log("[4wide-bot] Room is 4-wide. Switching to player bracket.");
+          console.log(`[Worker-${roomid}] Room is 4-wide. Switching to player bracket.`);
           await currentRoom.switch("player").catch((err) => {
-            console.error("[4wide-bot] Failed to switch to player bracket:", err);
+            console.error(`[Worker-${roomid}] Failed to switch to player bracket:`, err);
           });
         }
       } else {
         if (currentBracket !== "spectator") {
-          console.log(`[4wide-bot] Room board width is ${boardWidth || 4} (not 4-wide). Switching to spectator bracket.`);
+          console.log(`[Worker-${roomid}] Room board width is ${boardWidth || 4} (not 4-wide). Switching to spectator bracket.`);
           await currentRoom.switch("spectator").catch((err) => {
-            console.error("[4wide-bot] Failed to switch to spectator bracket:", err);
+            console.error(`[Worker-${roomid}] Failed to switch to spectator bracket:`, err);
           });
           await currentRoom.chat("This bot only plays in 4-wide rooms. Spectating until room is set to 4-wide.").catch(() => {});
         }
@@ -187,13 +146,12 @@ while (true) {
     // Check config immediately upon joining
     await checkRoomConfigAndBracket();
 
-    // Listen to updates
     const onRoomUpdate = async () => {
       await checkRoomConfigAndBracket();
     };
 
     const onRoomUpdateBracket = async (data: { uid: string }) => {
-      if (data.uid === client.user.id) {
+      if (client && data.uid === client.user.id) {
         await checkRoomConfigAndBracket();
       }
     };
@@ -201,19 +159,94 @@ while (true) {
     client.on("room.update", onRoomUpdate);
     client.on("room.update.bracket", onRoomUpdateBracket);
 
+    // Listen to room chat for command handling
+    client.on("room.chat", async (chat) => {
+      if (chat.system) return;
+      if (!client || chat.user._id === client.user.id) return;
+
+      const content = chat.content.trim();
+      if (content.toLowerCase().startsWith("!pps")) {
+        const parts = content.split(/\s+/);
+        if (parts.length >= 2) {
+          const ppsVal = parseFloat(parts[1]);
+          if (!isNaN(ppsVal) && ppsVal >= 0.1 && ppsVal <= 10.0) {
+            roomPps = ppsVal;
+            if (wrapper) {
+              wrapper.config.pps = ppsVal;
+            }
+            await client.room?.chat(`PPS updated to ${ppsVal}`).catch((err) => {
+              console.error(`[Worker-${roomid}] Failed to send chat message:`, err);
+            });
+            console.log(`[Worker-${roomid}] PPS updated to ${ppsVal} by ${chat.user.username}`);
+          } else {
+            await client.room?.chat("Invalid PPS value. Please enter a number between 0.1 and 10.0.").catch(() => {});
+          }
+        } else {
+          await client.room?.chat(`Current PPS is ${roomPps}`).catch(() => {});
+        }
+      }
+    });
+
+    // Persistent round start listener
+    client.on("client.game.round.start", async ([tick, engine]) => {
+      if (!client || client.room?.self?.bracket !== "player") {
+        console.log(`[Worker-${roomid}] Game started, but bot is in spectator bracket. Ignoring.`);
+        return;
+      }
+      console.log(`[Worker-${roomid}] Round started!`);
+      client.social.status("online", "lobby_ig:X-PRIV");
+
+      const adapter = new adapters.IO({
+        path: path.join((import.meta as any).dir, "../target/release/triangle-adapter"),
+        verbose: false,
+      });
+
+      wrapper = new BotWrapper(adapter, {
+        pps: roomPps,
+      });
+
+      const initPromise = wrapper.init(engine);
+
+      let isReady = false;
+      initPromise.then(() => {
+        isReady = true;
+      });
+
+      tick(async ({ engine, events }) => {
+        if (!isReady || !wrapper) {
+          return { keys: [] };
+        }
+        adapter.update(engine);
+        return {
+          keys: await wrapper.tick(engine, events),
+        };
+      });
+
+      await client.wait("client.game.over");
+      console.log(`[Worker-${roomid}] Round over.`);
+      if (client) {
+        client.social.status("online", "lobby:X-PRIV");
+      }
+      if (wrapper) {
+        wrapper.stop();
+        wrapper = null;
+      }
+    });
+
     // Wait until the bot leaves the room (or gets kicked)
     await client.wait("room.leave");
-    console.log("[4wide-bot] Left room. Waiting for next invite...");
-    client.social.status("online", "menus");
-
-    // Clean up event listeners for this room
-    client.off("room.update", onRoomUpdate);
-    client.off("room.update.bracket", onRoomUpdateBracket);
+    console.log(`[Worker-${roomid}] Left room.`);
 
   } catch (err) {
-    console.error("[4wide-bot] Error in room lifecycle:", err);
-    client.social.status("online", "menus");
-    // Wait a bit before retrying/waiting again to avoid spamming
-    await new Promise((resolve) => setTimeout(resolve, 5000));
+    console.error(`[Worker-${roomid}] Error in room lifecycle:`, err);
+  } finally {
+    if (wrapper) {
+      try {
+        wrapper.stop();
+      } catch {}
+    }
+    if (client) {
+      await client.destroy().catch(() => {});
+    }
   }
 }
