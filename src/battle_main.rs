@@ -260,58 +260,59 @@ impl BattleApp {
         self.overall_max_combo_b = self.overall_max_combo_b.max(self.game_state_b.combo);
 
         // --- BOT A Step ---
-        if self.bot_human_like {
-            if self.bot_target_move.is_none() {
-                let interval_ms = (1000.0 / self.moves_per_second as f32) as u64;
-                if self.last_bot_move_time.elapsed() >= Duration::from_millis(interval_ms) {
-                    if !self.bot_thinking {
-                        let state_clone = self.game_state.clone();
-                        let opp_clone = self.game_state_b.clone();
-                        
-                        // Dynamically evaluate weights for visualization
-                        let inputs = MetaPolicyNetwork::extract_inputs(&state_clone, Some(&opp_clone));
-                        self.current_weights_a = self.meta_net_a.forward(&inputs);
+        if self.bot_target_move.is_none() {
+            if !self.bot_thinking {
+                let state_clone = self.game_state.clone();
+                let opp_clone = self.game_state_b.clone();
 
-                        let meta_net_clone = self.meta_net_a.clone();
-                        let depth = self.lookahead_depth;
-                        let (tx, rx) = channel();
-                        self.bot_result_rx = Some(rx);
-                        self.bot_thinking = true;
-                        thread::spawn(move || {
-                            let res = find_best_move_meta(&state_clone, Some(&opp_clone), &meta_net_clone, depth);
-                            let _ = tx.send(res);
-                        });
-                    }
+                // Dynamically evaluate weights for visualization
+                let inputs = MetaPolicyNetwork::extract_inputs(&state_clone, Some(&opp_clone));
+                self.current_weights_a = self.meta_net_a.forward(&inputs);
 
-                    let mut got_result = false;
-                    let mut result = None;
-                    if self.bot_thinking {
-                        if let Some(rx) = &self.bot_result_rx {
-                            if let Ok(res) = rx.try_recv() {
-                                got_result = true;
-                                result = res;
-                            }
-                        }
-                    }
+                let meta_net_clone = self.meta_net_a.clone();
+                let depth = self.lookahead_depth;
+                let (tx, rx) = channel();
+                self.bot_result_rx = Some(rx);
+                self.bot_thinking = true;
+                thread::spawn(move || {
+                    let res = find_best_move_meta(&state_clone, Some(&opp_clone), &meta_net_clone, depth);
+                    let _ = tx.send(res);
+                });
+            }
 
-                    if got_result {
-                        self.bot_thinking = false;
-                        self.bot_result_rx = None;
-                        if let Some((best_move, use_hold)) = result {
-                            self.bot_target_move = Some(best_move);
-                            self.bot_needs_hold = use_hold;
-                            self.bot_animating = true;
-                            self.last_bot_step_time = Instant::now();
-                            self.bot_stuck_ticks = 0;
-                            if self.active_y < best_move.y {
-                                self.active_y = best_move.y;
-                            }
-                        }
+            let mut got_result = false;
+            let mut result = None;
+            if self.bot_thinking {
+                if let Some(rx) = &self.bot_result_rx {
+                    if let Ok(res) = rx.try_recv() {
+                        got_result = true;
+                        result = res;
                     }
                 }
             }
 
-            if let Some(target) = self.bot_target_move {
+            if got_result {
+                self.bot_thinking = false;
+                self.bot_result_rx = None;
+                if let Some((best_move, use_hold)) = result {
+                    self.bot_target_move = Some(best_move);
+                    self.bot_needs_hold = use_hold;
+                    self.bot_animating = self.bot_human_like;
+                    self.last_bot_step_time = Instant::now();
+                    self.bot_stuck_ticks = 0;
+                    if self.bot_human_like {
+                        if self.active_y < best_move.y {
+                            self.active_y = best_move.y;
+                        }
+                    }
+                }
+            }
+        }
+
+        if let Some(target) = self.bot_target_move {
+            let interval_ms = (1000.0 / self.moves_per_second as f32) as u64;
+
+            if self.bot_human_like {
                 let step_delay_ms = (400.0 / (self.moves_per_second as f32 * 6.0).max(1.0)) as u64;
                 let step_delay = Duration::from_millis(step_delay_ms.clamp(5, 150));
 
@@ -351,153 +352,105 @@ impl BattleApp {
 
                         if (self.active_x, self.active_y, self.active_rot) == prev_state {
                             self.bot_stuck_ticks += 1;
-                            if self.bot_stuck_ticks >= 3 {
-                                self.game_state.do_move_battle(target, &mut self.game_state_b);
-                                self.reset_active_piece();
-                                self.bot_target_move = None;
-                                self.bot_animating = false;
-                                self.bot_stuck_ticks = 0;
-                                self.last_bot_move_time = Instant::now();
-                            }
                         } else {
                             self.bot_stuck_ticks = 0;
                         }
-                        return;
-                    }
+                    } else {
+                        if self.active_x < target.x {
+                            self.try_shift_x(1);
+                        } else if self.active_x > target.x {
+                            self.try_shift_x(-1);
+                        }
 
-                    if self.active_x < target.x {
-                        self.try_shift_x(1);
-                    } else if self.active_x > target.x {
-                        self.try_shift_x(-1);
-                    }
+                        if self.active_x == target.x && self.active_rot == target.rotation {
+                            if self.active_y > target.y {
+                                self.active_y -= 1;
+                            }
+                        }
 
-                    if self.active_x == target.x && self.active_rot == target.rotation {
-                        if self.active_y > target.y {
-                            self.active_y -= 1;
+                        let current_state = (self.active_x, self.active_y, self.active_rot);
+                        if current_state == prev_state {
+                            self.bot_stuck_ticks += 1;
+                        } else {
+                            self.bot_stuck_ticks = 0;
                         }
                     }
 
-                    let current_state = (self.active_x, self.active_y, self.active_rot);
-                    if current_state == prev_state {
-                        self.bot_stuck_ticks += 1;
-                        if self.bot_stuck_ticks >= 3 {
+                    let is_done = (self.active_x == target.x && self.active_rot == target.rotation && self.active_y == target.y)
+                        || self.bot_stuck_ticks >= 3;
+
+                    if is_done {
+                        if self.last_bot_move_time.elapsed() >= Duration::from_millis(interval_ms) {
                             self.game_state.do_move_battle(target, &mut self.game_state_b);
                             self.reset_active_piece();
                             self.bot_target_move = None;
                             self.bot_animating = false;
                             self.bot_stuck_ticks = 0;
-                            self.last_bot_move_time = Instant::now();
-                            return;
-                        }
-                    } else {
-                        self.bot_stuck_ticks = 0;
-                    }
-
-                    if self.active_x == target.x && self.active_rot == target.rotation && self.active_y == target.y {
-                        self.game_state.do_move_battle(target, &mut self.game_state_b);
-                        self.reset_active_piece();
-                        self.bot_target_move = None;
-                        self.bot_animating = false;
-                        self.bot_stuck_ticks = 0;
-                        self.last_bot_move_time = Instant::now();
-                    }
-                }
-            }
-        } else {
-            let interval_ms = (1000.0 / self.moves_per_second as f32) as u64;
-            if self.last_bot_move_time.elapsed() >= Duration::from_millis(interval_ms) {
-                if !self.bot_thinking {
-                    let state_clone = self.game_state.clone();
-                    let opp_clone = self.game_state_b.clone();
-
-                    // Dynamically evaluate weights for visualization
-                    let inputs = MetaPolicyNetwork::extract_inputs(&state_clone, Some(&opp_clone));
-                    self.current_weights_a = self.meta_net_a.forward(&inputs);
-
-                    let meta_net_clone = self.meta_net_a.clone();
-                    let depth = self.lookahead_depth;
-                    let (tx, rx) = channel();
-                    self.bot_result_rx = Some(rx);
-                    self.bot_thinking = true;
-                    thread::spawn(move || {
-                        let res = find_best_move_meta(&state_clone, Some(&opp_clone), &meta_net_clone, depth);
-                        let _ = tx.send(res);
-                    });
-                }
-
-                let mut got_result = false;
-                let mut result = None;
-                if self.bot_thinking {
-                    if let Some(rx) = &self.bot_result_rx {
-                        if let Ok(res) = rx.try_recv() {
-                            got_result = true;
-                            result = res;
                         }
                     }
                 }
-
-                if got_result {
-                    self.bot_thinking = false;
-                    self.bot_result_rx = None;
-                    if let Some((best_move, use_hold)) = result {
-                        if use_hold {
-                            self.game_state.hold();
-                        }
-                        self.game_state.do_move_battle(best_move, &mut self.game_state_b);
-                        self.reset_active_piece();
-                        self.last_bot_move_time = Instant::now();
+            } else {
+                // Instant placement: wait until PPS interval has elapsed before placing
+                if self.last_bot_move_time.elapsed() >= Duration::from_millis(interval_ms) {
+                    if self.bot_needs_hold {
+                        self.game_state.hold();
                     }
+                    self.game_state.do_move_battle(target, &mut self.game_state_b);
+                    self.reset_active_piece();
+                    self.bot_target_move = None;
+                    self.bot_needs_hold = false;
                 }
             }
         }
 
         // --- BOT B Step ---
-        if self.bot_human_like {
-            if self.bot_b_target_move.is_none() {
-                let interval_ms = (1000.0 / self.moves_per_second as f32) as u64;
-                if self.last_bot_b_move_time.elapsed() >= Duration::from_millis(interval_ms) {
-                    if !self.bot_b_thinking {
-                        let state_clone = self.game_state_b.clone();
-                        let opp_clone = self.game_state.clone();
-                        let weights_clone = self.weights_b.clone();
-                        let (tx, rx) = channel();
-                        self.bot_b_result_rx = Some(rx);
-                        self.bot_b_thinking = true;
-                        thread::spawn(move || {
-                            let res = find_best_move_original(&state_clone, Some(&opp_clone), &weights_clone, 6);
-                            let _ = tx.send(res);
-                        });
-                    }
+        if self.bot_b_target_move.is_none() {
+            if !self.bot_b_thinking {
+                let state_clone = self.game_state_b.clone();
+                let opp_clone = self.game_state.clone();
+                let weights_clone = self.weights_b.clone();
+                let (tx, rx) = channel();
+                self.bot_b_result_rx = Some(rx);
+                self.bot_b_thinking = true;
+                thread::spawn(move || {
+                    let res = find_best_move_original(&state_clone, Some(&opp_clone), &weights_clone, 6);
+                    let _ = tx.send(res);
+                });
+            }
 
-                    let mut got_result = false;
-                    let mut result = None;
-                    if self.bot_b_thinking {
-                        if let Some(rx) = &self.bot_b_result_rx {
-                            if let Ok(res) = rx.try_recv() {
-                                got_result = true;
-                                result = res;
-                            }
-                        }
-                    }
-
-                    if got_result {
-                        self.bot_b_thinking = false;
-                        self.bot_b_result_rx = None;
-                        if let Some((best_move, use_hold)) = result {
-                            self.bot_b_target_move = Some(best_move);
-                            self.bot_b_needs_hold = use_hold;
-                            self.bot_b_animating = true;
-                            self.last_bot_b_step_time = Instant::now();
-                            self.bot_b_stuck_ticks = 0;
-                            if self.active_y_b < best_move.y {
-                                self.active_y_b = best_move.y;
-                            }
-                        }
+            let mut got_result = false;
+            let mut result = None;
+            if self.bot_b_thinking {
+                if let Some(rx) = &self.bot_b_result_rx {
+                    if let Ok(res) = rx.try_recv() {
+                        got_result = true;
+                        result = res;
                     }
                 }
             }
 
-            if let Some(target) = self.bot_b_target_move {
+            if got_result {
+                self.bot_b_thinking = false;
+                self.bot_b_result_rx = None;
+                if let Some((best_move, use_hold)) = result {
+                    self.bot_b_target_move = Some(best_move);
+                    self.bot_b_needs_hold = use_hold;
+                    self.bot_b_animating = self.bot_human_like;
+                    self.last_bot_b_step_time = Instant::now();
+                    self.bot_b_stuck_ticks = 0;
+                    if self.bot_human_like {
+                        if self.active_y_b < best_move.y {
+                            self.active_y_b = best_move.y;
+                        }
+                    }
+                }
+            }
+        }
+
+        if let Some(target) = self.bot_b_target_move {
+            let interval_ms = (1000.0 / self.moves_per_second as f32) as u64;
+
+            if self.bot_human_like {
                 let step_delay_ms = (400.0 / (self.moves_per_second as f32 * 6.0).max(1.0)) as u64;
                 let step_delay = Duration::from_millis(step_delay_ms.clamp(5, 150));
 
@@ -537,96 +490,53 @@ impl BattleApp {
 
                         if (self.active_x_b, self.active_y_b, self.active_rot_b) == prev_state {
                             self.bot_b_stuck_ticks += 1;
-                            if self.bot_b_stuck_ticks >= 3 {
-                                self.game_state_b.do_move_battle(target, &mut self.game_state);
-                                self.reset_active_piece_b();
-                                self.bot_b_target_move = None;
-                                self.bot_b_animating = false;
-                                self.bot_b_stuck_ticks = 0;
-                                self.last_bot_b_move_time = Instant::now();
-                            }
                         } else {
                             self.bot_b_stuck_ticks = 0;
                         }
-                        return;
-                    }
+                    } else {
+                        if self.active_x_b < target.x {
+                            self.try_shift_x_b(1);
+                        } else if self.active_x_b > target.x {
+                            self.try_shift_x_b(-1);
+                        }
 
-                    if self.active_x_b < target.x {
-                        self.try_shift_x_b(1);
-                    } else if self.active_x_b > target.x {
-                        self.try_shift_x_b(-1);
-                    }
+                        if self.active_x_b == target.x && self.active_rot_b == target.rotation {
+                            if self.active_y_b > target.y {
+                                self.active_y_b -= 1;
+                            }
+                        }
 
-                    if self.active_x_b == target.x && self.active_rot_b == target.rotation {
-                        if self.active_y_b > target.y {
-                            self.active_y_b -= 1;
+                        let current_state = (self.active_x_b, self.active_y_b, self.active_rot_b);
+                        if current_state == prev_state {
+                            self.bot_b_stuck_ticks += 1;
+                        } else {
+                            self.bot_b_stuck_ticks = 0;
                         }
                     }
 
-                    let current_state = (self.active_x_b, self.active_y_b, self.active_rot_b);
-                    if current_state == prev_state {
-                        self.bot_b_stuck_ticks += 1;
-                        if self.bot_b_stuck_ticks >= 3 {
+                    let is_done = (self.active_x_b == target.x && self.active_rot_b == target.rotation && self.active_y_b == target.y)
+                        || self.bot_b_stuck_ticks >= 3;
+
+                    if is_done {
+                        if self.last_bot_b_move_time.elapsed() >= Duration::from_millis(interval_ms) {
                             self.game_state_b.do_move_battle(target, &mut self.game_state);
                             self.reset_active_piece_b();
                             self.bot_b_target_move = None;
                             self.bot_b_animating = false;
                             self.bot_b_stuck_ticks = 0;
-                            self.last_bot_b_move_time = Instant::now();
-                            return;
-                        }
-                    } else {
-                        self.bot_b_stuck_ticks = 0;
-                    }
-
-                    if self.active_x_b == target.x && self.active_rot_b == target.rotation && self.active_y_b == target.y {
-                        self.game_state_b.do_move_battle(target, &mut self.game_state);
-                        self.reset_active_piece_b();
-                        self.bot_b_target_move = None;
-                        self.bot_b_animating = false;
-                        self.bot_b_stuck_ticks = 0;
-                        self.last_bot_b_move_time = Instant::now();
-                    }
-                }
-            }
-        } else {
-            let interval_ms = (1000.0 / self.moves_per_second as f32) as u64;
-            if self.last_bot_b_move_time.elapsed() >= Duration::from_millis(interval_ms) {
-                if !self.bot_b_thinking {
-                    let state_clone = self.game_state_b.clone();
-                    let opp_clone = self.game_state.clone();
-                    let weights_clone = self.weights_b.clone();
-                    let (tx, rx) = channel();
-                    self.bot_b_result_rx = Some(rx);
-                    self.bot_b_thinking = true;
-                    thread::spawn(move || {
-                        let res = find_best_move_original(&state_clone, Some(&opp_clone), &weights_clone, 6);
-                        let _ = tx.send(res);
-                    });
-                }
-
-                let mut got_result = false;
-                let mut result = None;
-                if self.bot_b_thinking {
-                    if let Some(rx) = &self.bot_b_result_rx {
-                        if let Ok(res) = rx.try_recv() {
-                            got_result = true;
-                            result = res;
                         }
                     }
                 }
-
-                if got_result {
-                    self.bot_b_thinking = false;
-                    self.bot_b_result_rx = None;
-                    if let Some((best_move, use_hold)) = result {
-                        if use_hold {
-                            self.game_state_b.hold();
-                        }
-                        self.game_state_b.do_move_battle(best_move, &mut self.game_state);
-                        self.reset_active_piece_b();
-                        self.last_bot_b_move_time = Instant::now();
+            } else {
+                // Instant placement: wait until PPS interval has elapsed before placing
+                if self.last_bot_b_move_time.elapsed() >= Duration::from_millis(interval_ms) {
+                    if self.bot_b_needs_hold {
+                        self.game_state_b.hold();
                     }
+                    self.game_state_b.do_move_battle(target, &mut self.game_state);
+                    self.reset_active_piece_b();
+                    self.bot_b_target_move = None;
+                    self.bot_b_needs_hold = false;
                 }
             }
         }
