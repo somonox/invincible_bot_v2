@@ -75,10 +75,25 @@ masterClient.social.status("online", "menus");
 
 // Friend back anyone who friends the bot
 (masterClient as any).on("client.friended", async (friend: { id: string; name: string }) => {
-  console.log(`[4wide-bot] Received friend request from ${friend.name} (${friend.id}). Friending back...`);
-  await masterClient.social.friend(friend.id).catch((err) => {
-    console.error(`[4wide-bot] Failed to friend back ${friend.name}:`, err);
-  });
+  console.log(`[4wide-bot] Received friend request event for ${friend.name} (${friend.id})`);
+  
+  // Verify if they are already in friends list to avoid redundant API calls
+  const isAlreadyFriend = masterClient.social.friends.some(f => f.id === friend.id);
+  if (isAlreadyFriend) {
+    console.log(`[4wide-bot] ${friend.name} is already in the friends list. Skipping friend back.`);
+    return;
+  }
+
+  console.log(`[4wide-bot] Attempting to friend back ${friend.name}...`);
+  try {
+    const result = await masterClient.social.friend(friend.id);
+    console.log(`[4wide-bot] Friend back result for ${friend.name}: ${result}`);
+  } catch (err: any) {
+    console.error(`[4wide-bot] Error friending back ${friend.name}:`, err.message || err);
+    if (err.stack) {
+      console.error(err.stack);
+    }
+  }
 });
 
 
