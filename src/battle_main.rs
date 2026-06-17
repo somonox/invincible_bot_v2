@@ -25,7 +25,7 @@ use crate::engine::board::BOARD_HEIGHT;
 use crate::engine::header::{Move, Piece, Rotation};
 use crate::engine::state::GameState;
 use crate::rl::features::Weights;
-use crate::rl::agent::{find_best_move, find_best_move_meta};
+use crate::rl::agent::{find_best_move_meta, find_best_move_original};
 use crate::rl::meta_agent::MetaPolicyNetwork;
 use crate::gui::widgets::{render_board, render_piece_preview, render_queue_preview};
 
@@ -460,12 +460,11 @@ impl BattleApp {
                         let state_clone = self.game_state_b.clone();
                         let opp_clone = self.game_state.clone();
                         let weights_clone = self.weights_b.clone();
-                        let depth = self.lookahead_depth;
                         let (tx, rx) = channel();
                         self.bot_b_result_rx = Some(rx);
                         self.bot_b_thinking = true;
                         thread::spawn(move || {
-                            let res = find_best_move(&state_clone, Some(&opp_clone), &weights_clone, depth);
+                            let res = find_best_move_original(&state_clone, Some(&opp_clone), &weights_clone, 6);
                             let _ = tx.send(res);
                         });
                     }
@@ -597,12 +596,11 @@ impl BattleApp {
                     let state_clone = self.game_state_b.clone();
                     let opp_clone = self.game_state.clone();
                     let weights_clone = self.weights_b.clone();
-                    let depth = self.lookahead_depth;
                     let (tx, rx) = channel();
                     self.bot_b_result_rx = Some(rx);
                     self.bot_b_thinking = true;
                     thread::spawn(move || {
-                        let res = find_best_move(&state_clone, Some(&opp_clone), &weights_clone, depth);
+                        let res = find_best_move_original(&state_clone, Some(&opp_clone), &weights_clone, 6);
                         let _ = tx.send(res);
                     });
                 }

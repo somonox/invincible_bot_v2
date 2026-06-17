@@ -818,3 +818,101 @@ impl MetaGeneticOptimizer {
         self.generation += 1;
     }
 }
+
+pub fn evaluate_state_recursive_original(
+    state: &GameState,
+    opponent_state: Option<&GameState>,
+    weights: &Weights,
+    current_depth: usize,
+    max_depth: usize,
+    tt: &mut TranspositionTable,
+) -> f32 {
+    if state.game_over {
+        return -100000.0;
+    }
+    if state.board.highest_row() == 0 {
+        let feat = Features::evaluate_state(state, opponent_state);
+        return feat.dot_product(weights);
+    }
+    if current_depth >= max_depth {
+        let feat = Features::evaluate_state(state, opponent_state);
+        return feat.dot_product(weights);
+    }
+
+    let hash = get_zobrist_keys().hash_state(state);
+    let remaining_depth = (max_depth - current_depth) as u8;
+    if let Some(cached_score) = tt.probe(hash, remaining_depth) {
+        return cached_score;
+    }
+
+    let mut next_branches = get_all_next_states(state);
+    if next_branches.is_empty() {
+        return -50000.0; // Trapped
+    }
+
+    // Apply Beam Search pruning to prevent exponential branching growth
+    // Sort moves by 1-ply heuristic score and keep candidates
+    let beam_width = if state.board.highest_row() <= 5 {
+        if current_depth <= 2 { 6 } else { 4 }
+    } else {
+        4
+    };
+    if next_branches.len() > beam_width {
+        next_branches.sort_by(|a, b| {
+            let score_a = Features::evaluate_state(&a.0, opponent_state).dot_product(weights);
+            let score_b = Features::evaluate_state(&b.0, opponent_state).dot_product(weights);
+            score_b.partial_cmp(&score_a).unwrap_or(std::cmp::Ordering::Equal)
+        });
+        next_branches.truncate(beam_width);
+    }
+
+    let mut best_score = f32::NEG_INFINITY;
+    for (sim_state, _, _) in next_branches {
+        let child_score = evaluate_state_recursive_original(&sim_state, opponent_state, weights, current_depth + 1, max_depth, tt);
+        let reward = if sim_state.combo > 0 {
+            10000.0 * (sim_state.combo as f32)
+        } else {
+            0.0
+        };
+        let score = child_score + reward;
+        if score > best_score {
+            best_score = score;
+        }
+    }
+
+    tt.store(hash, remaining_depth, best_score);
+    best_score
+}
+
+pub fn find_best_move_original(
+    state: &GameState,
+    opponent_state: Option<&GameState>,
+    weights: &Weights,
+    depth: usize,
+) -> Option<(Move, bool)> {
+    let next_branches = get_all_next_states(state);
+    if next_branches.is_empty() {
+        return None;
+    }
+
+    let mut best_score = f32::NEG_INFINITY;
+    let mut best_choice = None;
+
+    let mut tt = TranspositionTable::new(16384);
+
+    for (sim_state1, m, used_hold) in next_branches {
+        let child_score = evaluate_state_recursive_original(&sim_state1, opponent_state, weights, 1, depth, &mut tt);
+        let reward = if sim_state1.combo > 0 {
+            10000.0 * (sim_state1.combo as f32)
+        } else {
+            0.0
+        };
+        let score = child_score + reward;
+        if score > best_score {
+            best_score = score;
+            best_choice = Some((m, used_hold));
+        }
+    }
+
+    best_choice
+}
