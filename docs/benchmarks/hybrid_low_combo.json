@@ -1,0 +1,55 @@
+{
+  "clear_moves": 227,
+  "combo_breaks": 77,
+  "decisions": {
+    "Combo: no PC found in preview": 8,
+    "PC in 1 placements": 91,
+    "PC in 2 placements": 71,
+    "PC in 3 placements": 67,
+    "PC in 4 placements": 40,
+    "PC in 5 placements": 29,
+    "PC in 6 placements": 14
+  },
+  "depth": 6,
+  "games": [
+    {
+      "clear_moves": 57,
+      "combo_breaks": 19,
+      "max_combo": 6,
+      "perfect_clears": 24,
+      "placed": 80,
+      "seed": 0
+    },
+    {
+      "clear_moves": 57,
+      "combo_breaks": 20,
+      "max_combo": 6,
+      "perfect_clears": 24,
+      "placed": 80,
+      "seed": 1
+    },
+    {
+      "clear_moves": 57,
+      "combo_breaks": 18,
+      "max_combo": 6,
+      "perfect_clears": 21,
+      "placed": 80,
+      "seed": 2
+    },
+    {
+      "clear_moves": 56,
+      "combo_breaks": 20,
+      "max_combo": 5,
+      "perfect_clears": 22,
+      "placed": 80,
+      "seed": 3
+    }
+  ],
+  "mean_ms": 2.3744378125,
+  "objective": "hybrid",
+  "opponent_combo": 0,
+  "p50_ms": 0.8865000000000001,
+  "p95_ms": 6.9743,
+  "perfect_clears": 91,
+  "searches": 320
+}

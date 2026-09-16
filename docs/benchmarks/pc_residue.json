@@ -1,0 +1,47 @@
+{
+  "clear_moves": 304,
+  "combo_breaks": 13,
+  "decisions": {},
+  "depth": 6,
+  "games": [
+    {
+      "clear_moves": 73,
+      "combo_breaks": 5,
+      "max_combo": 21,
+      "perfect_clears": 0,
+      "placed": 80,
+      "seed": 0
+    },
+    {
+      "clear_moves": 79,
+      "combo_breaks": 1,
+      "max_combo": 71,
+      "perfect_clears": 0,
+      "placed": 80,
+      "seed": 1
+    },
+    {
+      "clear_moves": 77,
+      "combo_breaks": 2,
+      "max_combo": 54,
+      "perfect_clears": 0,
+      "placed": 80,
+      "seed": 2
+    },
+    {
+      "clear_moves": 75,
+      "combo_breaks": 5,
+      "max_combo": 41,
+      "perfect_clears": 0,
+      "placed": 80,
+      "seed": 3
+    }
+  ],
+  "mean_ms": 6.653350937500003,
+  "objective": "pc-residue",
+  "opponent_combo": 0,
+  "p50_ms": 6.6239,
+  "p95_ms": 7.866,
+  "perfect_clears": 0,
+  "searches": 320
+}

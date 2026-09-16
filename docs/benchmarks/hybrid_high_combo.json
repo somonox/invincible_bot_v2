@@ -1,0 +1,49 @@
+{
+  "clear_moves": 304,
+  "combo_breaks": 14,
+  "decisions": {
+    "Combo: opponent combo is high": 320
+  },
+  "depth": 6,
+  "games": [
+    {
+      "clear_moves": 76,
+      "combo_breaks": 4,
+      "max_combo": 28,
+      "perfect_clears": 1,
+      "placed": 80,
+      "seed": 0
+    },
+    {
+      "clear_moves": 76,
+      "combo_breaks": 4,
+      "max_combo": 39,
+      "perfect_clears": 2,
+      "placed": 80,
+      "seed": 1
+    },
+    {
+      "clear_moves": 76,
+      "combo_breaks": 3,
+      "max_combo": 26,
+      "perfect_clears": 0,
+      "placed": 80,
+      "seed": 2
+    },
+    {
+      "clear_moves": 76,
+      "combo_breaks": 3,
+      "max_combo": 38,
+      "perfect_clears": 1,
+      "placed": 80,
+      "seed": 3
+    }
+  ],
+  "mean_ms": 8.418643124999997,
+  "objective": "hybrid",
+  "opponent_combo": 8,
+  "p50_ms": 8.167300000000001,
+  "p95_ms": 10.2368,
+  "perfect_clears": 4,
+  "searches": 320
+}

@@ -37,13 +37,13 @@ impl Piece {
     pub fn color(self) -> [u8; 3] {
         // Aesthetic modern HSL/RGB colors for Tetris pieces (soft/vibrant, not fully saturated)
         match self {
-            Piece::I => [0, 180, 216],   // Sleek Cyan
-            Piece::O => [255, 195, 0],   // Sleek Yellow
-            Piece::T => [162, 0, 255],   // Deep Purple
-            Piece::L => [255, 109, 0],   // Bright Orange
-            Piece::J => [0, 114, 255],   // Royal Blue
-            Piece::S => [56, 176, 0],    // Emerald Green
-            Piece::Z => [224, 30, 90],   // Crimson Red
+            Piece::I => [0, 180, 216], // Sleek Cyan
+            Piece::O => [255, 195, 0], // Sleek Yellow
+            Piece::T => [162, 0, 255], // Deep Purple
+            Piece::L => [255, 109, 0], // Bright Orange
+            Piece::J => [0, 114, 255], // Royal Blue
+            Piece::S => [56, 176, 0],  // Emerald Green
+            Piece::Z => [224, 30, 90], // Crimson Red
         }
     }
 }
@@ -135,8 +135,26 @@ impl std::ops::Sub for Coordinates {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[repr(u8)]
+pub enum Spin {
+    #[default]
+    None,
+    Mini,
+    Full,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum SpinMode {
+    #[default]
+    All,
+    AllMiniPlus,
+    TSpins,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Move {
+    pub spin: Spin,
     pub piece: Piece,
     pub rotation: Rotation,
     pub x: i32,
@@ -145,6 +163,12 @@ pub struct Move {
 
 impl Move {
     pub fn new(piece: Piece, rotation: Rotation, x: i32, y: i32) -> Self {
-        Self { piece, rotation, x, y }
+        Self {
+            piece,
+            rotation,
+            x,
+            y,
+            spin: Spin::None,
+        }
     }
 }

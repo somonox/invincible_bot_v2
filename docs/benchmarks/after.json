@@ -1,0 +1,67 @@
+{
+  "clear_moves": 628,
+  "combo_breaks": 12,
+  "depth": 6,
+  "games": [
+    {
+      "clear_moves": 79,
+      "combo_breaks": 1,
+      "max_combo": 76,
+      "placed": 80,
+      "seed": 0
+    },
+    {
+      "clear_moves": 79,
+      "combo_breaks": 1,
+      "max_combo": 58,
+      "placed": 80,
+      "seed": 1
+    },
+    {
+      "clear_moves": 76,
+      "combo_breaks": 4,
+      "max_combo": 54,
+      "placed": 80,
+      "seed": 2
+    },
+    {
+      "clear_moves": 76,
+      "combo_breaks": 4,
+      "max_combo": 25,
+      "placed": 80,
+      "seed": 3
+    },
+    {
+      "clear_moves": 80,
+      "combo_breaks": 0,
+      "max_combo": 80,
+      "placed": 80,
+      "seed": 4
+    },
+    {
+      "clear_moves": 80,
+      "combo_breaks": 0,
+      "max_combo": 80,
+      "placed": 80,
+      "seed": 5
+    },
+    {
+      "clear_moves": 79,
+      "combo_breaks": 1,
+      "max_combo": 52,
+      "placed": 80,
+      "seed": 6
+    },
+    {
+      "clear_moves": 79,
+      "combo_breaks": 1,
+      "max_combo": 48,
+      "placed": 80,
+      "seed": 7
+    }
+  ],
+  "mean_ms": 17.6777328125,
+  "p50_ms": 16.8653,
+  "p95_ms": 26.1476,
+  "searches": 640
+}

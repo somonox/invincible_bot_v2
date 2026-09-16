@@ -15,9 +15,9 @@ pub fn get_piece_cells(piece: Piece, rotation: Rotation) -> [Coordinates; 4] {
     match piece {
         Piece::I => match rotation {
             Rotation::North => make_coords((-1, 0), (0, 0), (1, 0), (2, 0)),
-            Rotation::East => make_coords((1, -1), (1, 0), (1, 1), (1, 2)),
-            Rotation::South => make_coords((2, 1), (1, 1), (0, 1), (-1, 1)),
-            Rotation::West => make_coords((0, 2), (0, 1), (0, 0), (0, -1)),
+            Rotation::East => make_coords((1, 1), (1, 0), (1, -1), (1, -2)),
+            Rotation::South => make_coords((2, -1), (1, -1), (0, -1), (-1, -1)),
+            Rotation::West => make_coords((0, -2), (0, -1), (0, 0), (0, 1)),
         },
         Piece::O => {
             // O piece has no rotation shifts under standard simplified SRS
@@ -56,7 +56,8 @@ pub fn get_piece_cells(piece: Piece, rotation: Rotation) -> [Coordinates; 4] {
     }
 }
 
-/// Standard SRS kick translation tests for normal pieces (T, L, J, S, Z).
+/// SRS-X: SRS quarter turns plus ordered 180-degree tests (board Y points up).
+/// Source: TETR.IO client and @haelp/teto 4.2.7; see docs/TETRIO_RULES.md.
 /// Returns offsets for rotation transition (from, to).
 pub fn get_srs_kicks(from: Rotation, to: Rotation) -> &'static [(i32, i32)] {
     match (from, to) {
@@ -68,11 +69,67 @@ pub fn get_srs_kicks(from: Rotation, to: Rotation) -> &'static [(i32, i32)] {
         (Rotation::West, Rotation::South) => &[(0, 0), (-1, 0), (-1, -1), (0, 2), (-1, 2)],
         (Rotation::West, Rotation::North) => &[(0, 0), (-1, 0), (-1, -1), (0, 2), (-1, 2)],
         (Rotation::North, Rotation::West) => &[(0, 0), (1, 0), (1, 1), (0, -2), (1, -2)],
+        (Rotation::North, Rotation::South) => &[
+            (0, 0),
+            (1, 0),
+            (2, 0),
+            (1, -1),
+            (2, -1),
+            (-1, 0),
+            (-2, 0),
+            (-1, -1),
+            (-2, -1),
+            (0, 1),
+            (3, 0),
+            (-3, 0),
+        ],
+        (Rotation::East, Rotation::West) => &[
+            (0, 0),
+            (0, -1),
+            (0, -2),
+            (-1, -1),
+            (-1, -2),
+            (0, 1),
+            (0, 2),
+            (-1, 1),
+            (-1, 2),
+            (1, 0),
+            (0, -3),
+            (0, 3),
+        ],
+        (Rotation::South, Rotation::North) => &[
+            (0, 0),
+            (-1, 0),
+            (-2, 0),
+            (-1, 1),
+            (-2, 1),
+            (1, 0),
+            (2, 0),
+            (1, 1),
+            (2, 1),
+            (0, -1),
+            (-3, 0),
+            (3, 0),
+        ],
+        (Rotation::West, Rotation::East) => &[
+            (0, 0),
+            (0, -1),
+            (0, -2),
+            (1, -1),
+            (1, -2),
+            (0, 1),
+            (0, 2),
+            (1, 1),
+            (1, 2),
+            (-1, 0),
+            (0, -3),
+            (0, 3),
+        ],
         _ => &[(0, 0)],
     }
 }
 
-/// SRS kick translation tests for the I piece.
+/// SRS-X kick translation tests for the I piece.
 pub fn get_srs_kicks_i(from: Rotation, to: Rotation) -> &'static [(i32, i32)] {
     match (from, to) {
         (Rotation::North, Rotation::East) => &[(0, 0), (-2, 0), (1, 0), (-2, -1), (1, 2)],
@@ -83,6 +140,10 @@ pub fn get_srs_kicks_i(from: Rotation, to: Rotation) -> &'static [(i32, i32)] {
         (Rotation::West, Rotation::South) => &[(0, 0), (-2, 0), (1, 0), (-2, -1), (1, 2)],
         (Rotation::West, Rotation::North) => &[(0, 0), (1, 0), (-2, 0), (1, -2), (-2, 1)],
         (Rotation::North, Rotation::West) => &[(0, 0), (-1, 0), (2, 0), (-1, 2), (2, -1)],
+        (Rotation::North, Rotation::South) => &[(0, 0), (-1, 0), (-2, 0), (1, 0), (2, 0), (0, -1)],
+        (Rotation::East, Rotation::West) => &[(0, 0), (0, -1), (0, -2), (0, 1), (0, 2), (-1, 0)],
+        (Rotation::South, Rotation::North) => &[(0, 0), (1, 0), (2, 0), (-1, 0), (-2, 0), (0, 1)],
+        (Rotation::West, Rotation::East) => &[(0, 0), (0, -1), (0, -2), (0, 1), (0, 2), (1, 0)],
         _ => &[(0, 0)],
     }
 }

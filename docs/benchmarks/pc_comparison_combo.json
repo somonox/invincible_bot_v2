@@ -1,0 +1,77 @@
+{
+  "clear_moves": 613,
+  "combo_breaks": 23,
+  "depth": 6,
+  "games": [
+    {
+      "clear_moves": 77,
+      "combo_breaks": 3,
+      "max_combo": 41,
+      "perfect_clears": 1,
+      "placed": 80,
+      "seed": 0
+    },
+    {
+      "clear_moves": 76,
+      "combo_breaks": 4,
+      "max_combo": 31,
+      "perfect_clears": 1,
+      "placed": 80,
+      "seed": 1
+    },
+    {
+      "clear_moves": 77,
+      "combo_breaks": 2,
+      "max_combo": 48,
+      "perfect_clears": 0,
+      "placed": 80,
+      "seed": 2
+    },
+    {
+      "clear_moves": 77,
+      "combo_breaks": 2,
+      "max_combo": 38,
+      "perfect_clears": 1,
+      "placed": 80,
+      "seed": 3
+    },
+    {
+      "clear_moves": 75,
+      "combo_breaks": 4,
+      "max_combo": 20,
+      "perfect_clears": 0,
+      "placed": 80,
+      "seed": 4
+    },
+    {
+      "clear_moves": 76,
+      "combo_breaks": 4,
+      "max_combo": 43,
+      "perfect_clears": 2,
+      "placed": 80,
+      "seed": 5
+    },
+    {
+      "clear_moves": 77,
+      "combo_breaks": 2,
+      "max_combo": 37,
+      "perfect_clears": 2,
+      "placed": 80,
+      "seed": 6
+    },
+    {
+      "clear_moves": 78,
+      "combo_breaks": 2,
+      "max_combo": 65,
+      "perfect_clears": 1,
+      "placed": 80,
+      "seed": 7
+    }
+  ],
+  "mean_ms": 13.876576718749996,
+  "objective": "combo",
+  "p50_ms": 13.5402,
+  "p95_ms": 18.857100000000003,
+  "perfect_clears": 8,
+  "searches": 640
+}
