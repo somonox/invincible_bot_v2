@@ -1,61 +1,57 @@
-# Adaptive PC / combo opponent
+# Garbage-aware PC / combo policy
 
-The GUI left bot stays on the existing Combo objective. The right uses
-`find_hybrid_move`, with a visible strategy reason and a configurable opponent
-combo threshold (default 20, range 1–20). This is an initial tuning value, not an
-empirically optimized win-rate threshold. Shared depth and paired turns remain.
-Changes to the threshold take effect on the next search, not an in-flight pair.
+The GUI left bot keeps the Combo objective. The right bot and online adapter use
+`find_hybrid_move`. There is no opponent combo threshold or threshold slider.
+The GUI reports the selected strategy and predicted cancellation. Shared depth,
+paired turns, current combo display, SRS-X and spin settings are preserved.
 
-The decision is recomputed on every actual board snapshot:
+Every placement is planned again from the latest actual board and incoming queue:
 
-1. If occupied cells are not divisible by gcd(width,4), prefer Combo immediately.
-   In a 4-column board, each piece adds 4 cells and each line removes 4; the
-   remainder cannot change until garbage actually enters the board. Pending or
-   speculative future garbage is not treated as permission to chase an impossible
-   PC. The board is reconsidered after it changes.
-2. If the opponent's displayed combo is at least the threshold, use the full
-   Combo objective. Even an immediate PC is not specially prioritized: clearing
-   the residue can interrupt the next few clearing moves. The combo search can
-   still choose a PC naturally if that is its best continuation.
-3. Otherwise probe for a PC in the bounded visible preview. Use that plan only
-   if a complete PC was actually found, reporting its placement depth.
-4. If the probe fails, rerun with Combo. Do not return the pure PC evaluator's
-   non-PC board-quality fallback. Failure means not found within the beam and
-   preview, not a proof of global impossibility.
+1. Keep the occupied-cell divisibility check: cells must be divisible by
+   gcd(width, 4) to pursue PC. On a four-wide board, pieces and clears cannot
+   change that remainder. Incoming garbage does not bypass this condition;
+   reconsider it after garbage actually changes the board.
+2. With incoming garbage, search a full visible horizon. Prefer fewer received
+   lines first, then a smaller sum of outstanding garbage after each placement
+   (earlier cancellation). With equal defensive outcomes, prefer PC when the
+   residue allows it; otherwise preserve the clear chain. An immediate PC is
+   allowed when it cancels efficiently. A multi-piece PC setup can lose to an
+   immediate combo clear when that prevents garbage from rising.
+3. With an empty garbage queue, probe for a reachable PC. If none is discovered
+   in the bounded beam/preview, use Combo. Pure PC and Combo APIs remain available.
 
-This changes the GUI right bot. Pure PC and Combo entry points remain available
-for comparisons, and the online adapter remains on its previous pure PC policy.
-No model training or live TETR.IO matches were performed.
+Both pending and future packets can be canceled. A non-clearing placement only
+receives ready garbage, up to the cap. Received lines and canceled lines are
+tracked separately: consuming the queue by taking damage never earns cancellation
+credit. Unlike the PC-only objective, defense does not stop at the first PC;
+remaining garbage and the following clear-chain break still affect its choice.
+
+## Online timing
+
+`garbage-context.ts` snapshots packet amount and `packet.frame + garbage.speed`,
+the live garbage cap, configured PPS and previous input-path duration immediately
+before each `play`. The adapter uses relative frame deadlines. The current lock
+uses the previous path duration (12 frames before the first path); subsequent
+locks include the wrapper's PPS wait plus estimated input duration. Each new
+snapshot replaces this prediction. The standard protocol queue remains a
+conservative fallback when timing data is unavailable. Fractional packet amounts
+are rounded up instead of being silently dropped.
+
+The GUI keeps its existing pending/one-turn queued delivery model. Search uses
+conservative one-for-one cancellation; GUI opener/B2B cancellation bonuses and
+online room-specific attack multipliers are not fully modeled. Future garbage
+holes use the last known hole, and attacks not yet present in the queue are not
+predicted. These limits mean this is not a guarantee of surviving a faster player.
 
 ## Verification
 
-`cargo test --all-targets`: 34 tests pass. New coverage checks residue rejection
-including pending garbage, low/high opponent threshold boundaries, two-piece PC
-setups, failed-PC fallback, full-horizon Combo even with an immediate PC,
-reconsideration after garbage/opponent changes, width-dependent divisibility,
-terminal states, and GUI left/right worker wiring.
+Regression fixtures cover a three-placement PC setup that switches to an
+immediate two-line cancellation under an eight-line ready queue, immediate PC
+cancellation, delayed packets allowing a PC before arrival, arrival deadlines and
+caps, queued-only pressure, zero-attack line blocking, residue preservation,
+empty-queue recovery, protocol fallback and independent TypeScript snapshots.
+Existing search, SRS-X, PC and paired GUI tests remain required.
 
-The recorded offline checks below used the previous threshold of 6. The GUI
-default is now 20; these are historical results, not measurements of that new default.
-Offline fixed-stream checks use four seeds, 80 placements each, depth 6 and no
-incoming garbage. Three-cell residue results:
-
-| Policy | Clearing moves / 320 | Chain breaks | PCs |
-| --- | ---: | ---: | ---: |
-| Pure PC | 304 | 13 | 0 |
-| Hybrid | 313 | 7 | 0 |
-| Pure Combo | 313 | 7 | 0 |
-
-On empty boards against a fixed displayed opponent combo of 0, hybrid completed
-91 PCs, using PC plans for 312 moves and Combo fallback for 8. Against fixed
-opponent combo 8, it uses the Combo policy for all 320 decisions. These are
-controlled policy checks, not head-to-head win-rate estimates. Existing local
-garbage/Surge approximations still apply to GUI battles.
-
-Raw results and reproduction:
-
-- [hybrid residue](benchmarks/hybrid_residue.json): `cargo run --release --example search_bench -- 4 80 6 hybrid-residue 0 6`
-- [PC residue](benchmarks/pc_residue.json): `cargo run --release --example search_bench -- 4 80 6 pc-residue 0`
-- [Combo residue](benchmarks/combo_residue.json): `cargo run --release --example search_bench -- 4 80 6 combo-residue 0`
-- [low opponent combo](benchmarks/hybrid_low_combo.json): `cargo run --release --example search_bench -- 4 80 6 hybrid 0 6`
-- [high opponent combo](benchmarks/hybrid_high_combo.json): `cargo run --release --example search_bench -- 4 80 6 hybrid 8 6`
+The JSON files under `docs/benchmarks/hybrid_*` are historical measurements from
+the old combo-threshold policy at commit `dfe324d`; they are not measurements of
+this garbage-aware policy. No live-match win-rate improvement is claimed.

@@ -11,10 +11,6 @@ fn main() {
     let moves = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(80usize);
     let depth = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(6usize);
     let mode = args.get(4).map(String::as_str).unwrap_or("pc");
-    let threshold = args
-        .get(6)
-        .and_then(|s| s.parse::<u32>().ok())
-        .unwrap_or(four_wide_bot::rl::search::DEFAULT_OPPONENT_COMBO_THRESHOLD);
     let net = MetaPolicyNetwork::default();
     let mut decisions = std::collections::BTreeMap::<String, usize>::new();
     let opponent_combo = args.get(5).and_then(|s| s.parse::<u32>().ok());
@@ -74,7 +70,6 @@ fn main() {
                     opponent_combo.map(|_| &opponent),
                     four_wide_bot::rl::search::Evaluator::Meta(&net),
                     depth,
-                    threshold,
                 );
                 if let Some(plan) = plan {
                     *decisions.entry(plan.mode.label()).or_default() += 1;
@@ -133,7 +128,7 @@ fn main() {
     println!(
         "{}",
         serde_json::to_string_pretty(&json!({
-            "games": records, "depth": depth, "decisions":decisions,"opponent_combo":opponent_combo,"combo_threshold":threshold, "searches": n, "objective": mode, "perfect_clears": total_pcs,
+            "games": records, "depth": depth, "decisions":decisions,"opponent_combo":opponent_combo, "searches": n, "objective": mode, "perfect_clears": total_pcs,
             "clear_moves": total_clears, "combo_breaks": total_breaks,
             "p50_ms": times[n / 2], "p95_ms": times[(n * 95 / 100).min(n - 1)],
             "mean_ms": times.iter().sum::<f64>() / n as f64,

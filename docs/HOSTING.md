@@ -3,8 +3,9 @@
 The bot consists of the Rust `triangle-adapter` and the Bun client in `tetrio-bot`.
 No GUI/display server is required. `up.sh` builds with `--no-default-features`
 and installs the dependency versions already recorded in `bun.lock`.
-The online adapter retains its existing PC policy; the GUI-only 20-combo adaptive
-opponent is not silently substituted during deployment.
+The online adapter uses the same garbage-aware PC/combo policy as the GUI right
+bot, with live incoming-packet timing supplied by the Bun client. See
+[the policy and prediction limits](HYBRID_POLICY.md).
 
 ## First run
 

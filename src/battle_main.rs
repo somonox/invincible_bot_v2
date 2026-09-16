@@ -74,7 +74,6 @@ struct BattleApp {
     last_search_a: Duration,
     last_search_b: Duration,
     active_depth: usize,
-    opponent_combo_threshold: u32,
     hybrid_mode: Option<HybridMode>,
     meta_net_a: MetaPolicyNetwork,
     weights_b: Weights,
@@ -132,7 +131,6 @@ impl BattleApp {
             last_search_a: Duration::ZERO,
             last_search_b: Duration::ZERO,
             active_depth: 6,
-            opponent_combo_threshold: crate::rl::search::DEFAULT_OPPONENT_COMBO_THRESHOLD,
             hybrid_mode: None,
             meta_net_a: MetaPolicyNetwork::default(),
             weights_b: Weights::default(),
@@ -187,7 +185,6 @@ impl BattleApp {
         let state_b = self.game_state_b.clone();
         let meta_net = self.meta_net_a.clone();
         let weights_b = self.weights_b.clone();
-        let threshold = self.opponent_combo_threshold;
         // Empty hold consumes another visible piece. Give both algorithms the
         // same usable horizon, including when the selector requests 6-ply.
         let visible_depth = |state: &GameState| {
@@ -226,7 +223,6 @@ impl BattleApp {
                 Some(&state_a),
                 Evaluator::Static(&weights_b),
                 depth,
-                threshold,
             );
             let choice = plan.map(|p| p.choice);
             let hybrid_mode = plan.map(|p| p.mode);
@@ -770,17 +766,13 @@ impl eframe::App for BattleApp {
             ));
 
             ui.heading("Left: Combo / Right: Adaptive PC + Combo");
-            ui.label("B pressures low combos with PC; otherwise keeps a combo.");
+            ui.label("B uses PC when safe; incoming garbage prioritizes cancellation.");
             ui.label(
                 self.hybrid_mode
                     .map(|m| m.label())
                     .unwrap_or_else(|| "B: deciding next strategy...".into()),
             );
-            ui.add(
-                egui::Slider::new(&mut self.opponent_combo_threshold, 1..=20)
-                    .text("Opponent combo: switch to combo"),
-            );
-            ui.label("Threshold changes apply next turn. High combos favor keeping the chain.");
+            ui.label("Switching: incoming garbage / cancellation");
             ui.label("Current Combo: first clear = 0, second consecutive clear = 1.");
             ui.label("Rotation: SRS-X (90 and 180 degrees)");
             let mut mode = self.game_state.spin_mode;
@@ -1026,7 +1018,6 @@ mod tests {
             Some(&app.game_state),
             Evaluator::Static(&app.weights_b),
             3,
-            app.opponent_combo_threshold,
         );
         app.start_paired_search();
         let ready = app

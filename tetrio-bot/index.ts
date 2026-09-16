@@ -2,6 +2,7 @@ import { Client } from "@haelp/teto";
 import { BotWrapper, adapters } from "@haelp/teto/utils";
 import path from "path";
 import { existsSync } from "node:fs";
+import { garbageContext } from "./garbage-context";
 
 // Monkey-patch BotWrapper.frames to space out consecutive movements/rotations with frame gaps
 (BotWrapper as any).frames = (engine: any, keys: string[]) => {
@@ -53,7 +54,14 @@ BotWrapper.prototype.tick = async function (this: any, engine: any, events: any,
         this.needsNewMove = false;
       }
     } else {
+      // Always refresh immediately before planning, including packets arriving
+      // while waiting for the PPS timer or for the previous piece to lock.
+      this.adapter.update(engine, {
+        ...fullData.state,
+        garbageContext: garbageContext(engine, this.config.pps, this.lastInputFrames),
+      });
       const { keys } = await this.adapter.play(engine, fullData.play);
+      this.lastInputFrames = keys.length * 2;
       const frames = BotWrapper.frames(engine, keys);
       this.needsNewMove = true;
       this.lastPieces = engine.stats.pieces;

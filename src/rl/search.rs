@@ -13,12 +13,13 @@ use crate::rl::{
 };
 
 const BEAM_WIDTH: usize = 64;
-pub const DEFAULT_OPPONENT_COMBO_THRESHOLD: u32 = 20;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Objective {
     PerfectClear,
     Combo,
+    DefensePc,
+    DefenseCombo,
 }
 
 #[derive(Clone, Copy)]
@@ -30,7 +31,7 @@ pub enum Evaluator<'a> {
 impl Evaluator<'_> {
     fn score(&self, state: &GameState, opponent: Option<&GameState>, objective: Objective) -> f32 {
         let mut features = Features::evaluate_state(state, opponent);
-        if objective == Objective::PerfectClear {
+        if matches!(objective, Objective::PerfectClear | Objective::DefensePc) {
             // Combo length must not overwhelm a PC setup, even with trained weights.
             features.combo_reward = 0.0;
         }
@@ -53,11 +54,24 @@ struct Node {
     perfect_clears: usize,
     quality: f32,
     attack: u32,
+    received: u32,
+    exposure: u64,
+    first_cancel: u32,
+    pc_depth: Option<usize>,
 }
 
 impl Node {
     fn compare(&self, other: &Self, objective: Objective) -> Ordering {
-        if objective == Objective::PerfectClear {
+        if matches!(objective, Objective::DefensePc | Objective::DefenseCombo) {
+            let safety = other
+                .received
+                .cmp(&self.received)
+                .then(other.exposure.cmp(&self.exposure));
+            if safety != Ordering::Equal {
+                return safety;
+            }
+        }
+        if matches!(objective, Objective::PerfectClear | Objective::DefensePc) {
             return self
                 .perfect_clears
                 .cmp(&other.perfect_clears)
@@ -92,6 +106,7 @@ struct Key {
     pending: u32,
     queued: u32,
     garbage_hole: usize,
+    packets: Option<Vec<crate::engine::state::GarbagePacket>>,
     chain_open: bool,
 }
 
@@ -112,6 +127,7 @@ impl Key {
             pending: s.pending_garbage,
             queued: s.queued_garbage,
             garbage_hole: s.last_garbage_hole_x,
+            packets: s.garbage_packets.clone(),
             chain_open: node.chain_open,
         }
     }
@@ -134,9 +150,15 @@ pub fn find_best_move(
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HybridMode {
-    PerfectClear { placements: usize },
+    PerfectClear {
+        placements: usize,
+    },
     ComboResidue,
-    ComboPressure,
+    GarbageDefense {
+        pc: bool,
+        canceled_next: u32,
+        received: u32,
+    },
     ComboNoVisiblePc,
 }
 impl HybridMode {
@@ -144,7 +166,14 @@ impl HybridMode {
         match self {
             Self::PerfectClear { placements } => format!("PC in {placements} placements"),
             Self::ComboResidue => "Combo: PC needs a change in garbage".into(),
-            Self::ComboPressure => "Combo: opponent combo is high".into(),
+            Self::GarbageDefense {
+                pc,
+                canceled_next,
+                received,
+            } => format!(
+                "{} defense: cancel {canceled_next} next, receive {received} in preview",
+                if pc { "PC" } else { "Combo" }
+            ),
             Self::ComboNoVisiblePc => "Combo: no PC found in preview".into(),
         }
     }
@@ -179,15 +208,27 @@ pub fn find_hybrid_move(
     opponent: Option<&GameState>,
     evaluator: Evaluator<'_>,
     depth: usize,
-    opponent_combo_threshold: u32,
 ) -> Option<HybridPlan> {
-    let pressure = opponent.is_some_and(|s| s.current_combo() >= opponent_combo_threshold);
+    if state.incoming_garbage() > 0 {
+        let allow_pc = pc_residue_possible(state);
+        let objective = if allow_pc {
+            Objective::DefensePc
+        } else {
+            Objective::DefenseCombo
+        };
+        // Compare complete horizons. Early return on the first PC hides the
+        // danger of remaining garbage after that PC breaks the clear chain.
+        return search(state, opponent, evaluator, depth, objective).map(|found| HybridPlan {
+            choice: found.choice,
+            mode: HybridMode::GarbageDefense {
+                pc: allow_pc && found.pc_depth.is_some(),
+                canceled_next: found.first_cancel,
+                received: found.received,
+            },
+        });
+    }
     let mode = if !pc_residue_possible(state) {
         HybridMode::ComboResidue
-    } else if pressure {
-        // Even an immediate PC can remove the residue needed for the following
-        // combo clears. Let the full-horizon combo policy decide under pressure.
-        HybridMode::ComboPressure
     } else {
         if let Some(found) = search(state, opponent, evaluator, depth, Objective::PerfectClear) {
             if let Some(placements) = found.pc_depth {
@@ -207,6 +248,8 @@ pub fn find_hybrid_move(
 struct SearchResult {
     choice: (Move, bool),
     pc_depth: Option<usize>,
+    first_cancel: u32,
+    received: u32,
 }
 
 pub fn find_best_move_for_objective(
@@ -244,6 +287,10 @@ fn search(
         let perfect_clears = usize::from(next.last_perfect_clear);
         frontier.push(Node {
             attack: next.last_attack,
+            received: next.last_received_garbage,
+            exposure: next.incoming_garbage() as u64,
+            first_cancel: next.last_canceled_garbage,
+            pc_depth: next.last_perfect_clear.then_some(1),
             state: next,
             first_move: m,
             use_hold,
@@ -257,7 +304,9 @@ fn search(
     retain_best(&mut frontier, BEAM_WIDTH, objective);
     let mut fallback = frontier.first().map(|n| SearchResult {
         choice: (n.first_move, n.use_hold),
-        pc_depth: (n.perfect_clears > 0).then_some(1),
+        pc_depth: n.pc_depth,
+        first_cancel: n.first_cancel,
+        received: n.received,
     });
     if objective == Objective::PerfectClear
         && frontier.first().is_some_and(|n| n.perfect_clears > 0)
@@ -277,6 +326,12 @@ fn search(
                 let perfect_clears = node.perfect_clears + usize::from(next.last_perfect_clear);
                 let mut candidate = Node {
                     attack: node.attack + next.last_attack,
+                    received: node.received + next.last_received_garbage,
+                    exposure: node.exposure + next.incoming_garbage() as u64,
+                    first_cancel: node.first_cancel,
+                    pc_depth: node
+                        .pc_depth
+                        .or_else(|| next.last_perfect_clear.then_some(layer + 1)),
                     state: next,
                     first_move: node.first_move,
                     use_hold: node.use_hold,
@@ -305,7 +360,9 @@ fn search(
         retain_best(&mut next_layer, BEAM_WIDTH, objective);
         fallback = next_layer.first().map(|n| SearchResult {
             choice: (n.first_move, n.use_hold),
-            pc_depth: (n.perfect_clears > 0).then_some(layer + 1),
+            pc_depth: n.pc_depth,
+            first_cancel: n.first_cancel,
+            received: n.received,
         });
         // Breadth by placement depth: the first layer with a PC is the soonest
         // discovered solution. Prefer completing it over keeping a combo alive.

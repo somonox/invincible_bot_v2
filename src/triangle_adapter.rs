@@ -31,9 +31,9 @@ use std::io::{self, BufRead, Write};
 
 use crate::engine::board::{Board, BOARD_HEIGHT};
 use crate::engine::header::{Move, Piece, SpinMode};
-use crate::engine::state::GameState;
-use crate::rl::agent::find_best_move_meta;
+use crate::engine::state::{GameState, GarbagePacket};
 use crate::rl::meta_agent::MetaPolicyNetwork;
+use crate::rl::search::{find_hybrid_move, Evaluator};
 
 /// Convert a piece symbol string ("T", "I", etc.) to our Piece enum.
 fn piece_from_str(s: &str) -> Option<Piece> {
@@ -74,7 +74,13 @@ fn build_state_from_protocol(msg: &Value, width: usize) -> GameState {
     let b2b = msg["b2b"].as_i64().unwrap_or(-1);
     let garbage = msg["garbage"]
         .as_array()
-        .map(|a| a.iter().filter_map(Value::as_u64).sum::<u64>() as u32)
+        .map(|a| {
+            a.iter()
+                .filter_map(Value::as_f64)
+                .filter(|n| n.is_finite() && *n > 0.0)
+                .map(|n| n.ceil() as u32)
+                .sum::<u32>()
+        })
         .unwrap_or(0);
     let mut state = GameState::from_triangle(
         board,
@@ -86,6 +92,37 @@ fn build_state_from_protocol(msg: &Value, width: usize) -> GameState {
         garbage,
     );
     state.b2b_level = (b2b + 1).max(0) as u32;
+    let context = &msg["data"]["garbageContext"];
+    if let Some(packets) = context["packets"].as_array() {
+        let parsed: Option<Vec<GarbagePacket>> = packets
+            .iter()
+            .map(|p| {
+                let amount = p["amount"].as_f64()?;
+                let ready = p["readyIn"].as_f64()?;
+                if !amount.is_finite() || !ready.is_finite() || amount < 0.0 {
+                    return None;
+                }
+                Some(GarbagePacket {
+                    amount: amount.ceil() as u32,
+                    ready_in: ready.max(0.0).ceil() as u32,
+                })
+            })
+            .collect();
+        // A malformed extension falls back to the standard protocol's queue.
+        if let Some(packets) = parsed {
+            state.garbage_packets = Some(packets);
+            state.sync_garbage_totals();
+        }
+    }
+    if let Some(frames) = context["framesPerPiece"].as_u64() {
+        state.frames_per_piece = frames.clamp(1, 3600) as u32;
+    }
+    if let Some(frames) = context["nextLockFrames"].as_u64() {
+        state.next_lock_frames = frames.clamp(1, 3600) as u32;
+    }
+    if let Some(cap) = context["cap"].as_u64() {
+        state.garbage_cap = cap.min(40) as u32;
+    }
     state
 }
 
@@ -208,9 +245,23 @@ fn main() {
                 if let Some(ref state_msg) = last_state {
                     let mut game_state = build_state_from_protocol(state_msg, board_width);
                     game_state.spin_mode = spin_mode;
+                    if let Some(cap) = msg["garbageCap"].as_f64() {
+                        let live_cap = cap.clamp(0.0, 40.0).floor() as u32;
+                        game_state.garbage_cap =
+                            if state_msg["data"]["garbageContext"]["cap"].is_u64() {
+                                live_cap.min(game_state.garbage_cap)
+                            } else {
+                                live_cap
+                            };
+                    }
 
                     let search_start = std::time::Instant::now();
-                    let result = find_best_move_meta(&game_state, None, &meta_net, lookahead_depth);
+                    let result = find_hybrid_move(
+                        &game_state,
+                        None,
+                        Evaluator::Meta(&meta_net),
+                        lookahead_depth,
+                    );
                     let search_duration = search_start.elapsed();
 
                     let path_start = std::time::Instant::now();
@@ -225,7 +276,15 @@ fn main() {
                             (keys, Some(m), h)
                         })
                     };
-                    let selected = result.and_then(|(m, h)| executable(m, h));
+                    let selected = result.and_then(|plan| executable(plan.choice.0, plan.choice.1));
+                    if let Some(plan) = result {
+                        eprintln!(
+                            "[4wide-bot] {} (incoming {})",
+                            plan.mode.label(),
+                            game_state.incoming_garbage()
+                        );
+                    }
+                    let used_plan = selected.is_some();
                     let (keys, best_move, use_hold) = selected
                         .or_else(|| {
                             eprintln!(
@@ -234,7 +293,13 @@ fn main() {
                             let mut candidates = crate::rl::agent::get_all_next_states(&game_state);
                             candidates.retain(|(s, _, _)| !s.game_over);
                             candidates.sort_by_key(|(s, _, _)| {
-                                std::cmp::Reverse((s.last_perfect_clear, s.last_attack))
+                                (
+                                    s.last_received_garbage,
+                                    std::cmp::Reverse(s.last_canceled_garbage),
+                                    std::cmp::Reverse(s.last_perfect_clear),
+                                    std::cmp::Reverse(s.combo > 0),
+                                    std::cmp::Reverse(s.last_attack),
+                                )
                             });
                             candidates
                                 .into_iter()
@@ -262,7 +327,10 @@ fn main() {
                     send_message(&json!({
                         "type": "move",
                         "keys": keys,
-                        "data": null
+                        "data": {
+                            "strategy": if used_plan { result.map(|p| p.mode.label()) } else { Some("Executable fallback".into()) },
+                            "incoming": game_state.incoming_garbage()
+                        }
                     }));
                 } else {
                     // No state received yet, just hard drop
@@ -283,6 +351,39 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn packet_extension_is_authoritative_and_preserves_timing() {
+        let s = build_state_from_protocol(
+            &json!({
+                "current":"O", "garbage":[12], "data":{"garbageContext":{
+                    "packets":[{"amount":3,"readyIn":0},{"amount":4,"readyIn":25}],
+                    "framesPerPiece":32,"nextLockFrames":6,"cap":4
+                }}
+            }),
+            4,
+        );
+        assert_eq!((s.pending_garbage, s.queued_garbage), (3, 4));
+        assert_eq!(
+            (s.frames_per_piece, s.next_lock_frames, s.garbage_cap),
+            (32, 6, 4)
+        );
+        let s = build_state_from_protocol(
+            &json!({"garbage":[3], "data":{"garbageContext":{"packets":[]}}}),
+            4,
+        );
+        assert_eq!(s.incoming_garbage(), 0);
+    }
+    #[test]
+    fn missing_or_invalid_extension_keeps_standard_queue_including_fractions() {
+        for data in [
+            json!(null),
+            json!({"garbageContext":{"packets":[{"amount":2}]}}),
+        ] {
+            let s = build_state_from_protocol(&json!({"garbage":[1.5,2,0,-3],"data":data}), 4);
+            assert_eq!(s.pending_garbage, 4);
+            assert!(s.garbage_packets.is_none());
+        }
+    }
     #[test]
     fn protocol_combo_and_b2b_keep_the_initial_clear() {
         for (protocol, internal, display) in [(-1, 0, 0), (0, 1, 0), (1, 2, 1), (7, 8, 7)] {

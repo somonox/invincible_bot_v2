@@ -4,6 +4,13 @@ use rand::seq::SliceRandom;
 use rand::thread_rng;
 use rand::Rng;
 
+/// Arrival deadline relative to the current decision, in simulation frames.
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+pub struct GarbagePacket {
+    pub amount: u32,
+    pub ready_in: u32,
+}
+
 #[derive(Clone, Debug)]
 pub struct GameState {
     pub board: Board,
@@ -31,6 +38,13 @@ pub struct GameState {
     pub b2b_level: u32,
     pub b2b_charge: u32,
     pub last_attack: u32,
+    pub last_canceled_garbage: u32,
+    pub last_received_garbage: u32,
+    /// None uses the GUI's pending/one-turn queued model.
+    pub garbage_packets: Option<Vec<GarbagePacket>>,
+    pub frames_per_piece: u32,
+    pub next_lock_frames: u32,
+    pub garbage_cap: u32,
 
     bag: Vec<Piece>,
     preview_only: bool,
@@ -74,6 +88,12 @@ impl GameState {
             b2b_level: 0,
             b2b_charge: 0,
             last_attack: 0,
+            last_canceled_garbage: 0,
+            last_received_garbage: 0,
+            garbage_packets: None,
+            frames_per_piece: 30,
+            next_lock_frames: 2,
+            garbage_cap: 8,
             bag,
             preview_only: false,
             current_known: true,
@@ -123,6 +143,12 @@ impl GameState {
             b2b_level: if b2b { 1 } else { 0 },
             b2b_charge: 0,
             last_attack: 0,
+            last_canceled_garbage: 0,
+            last_received_garbage: 0,
+            garbage_packets: None,
+            frames_per_piece: 30,
+            next_lock_frames: 2,
+            garbage_cap: 8,
             bag: Vec::new(),
             preview_only: true,
             current_known: true,
@@ -295,10 +321,85 @@ impl GameState {
         true
     }
 
+    pub fn incoming_garbage(&self) -> u32 {
+        self.pending_garbage.saturating_add(self.queued_garbage)
+    }
+
+    pub fn sync_garbage_totals(&mut self) {
+        if let Some(packets) = &self.garbage_packets {
+            self.pending_garbage = packets
+                .iter()
+                .filter(|p| p.ready_in == 0)
+                .map(|p| p.amount)
+                .sum();
+            self.queued_garbage = packets
+                .iter()
+                .filter(|p| p.ready_in > 0)
+                .map(|p| p.amount)
+                .sum();
+        }
+    }
+
+    fn resolve_search_garbage(&mut self, cleared: u32, attack: u32) {
+        self.last_canceled_garbage = 0;
+        self.last_received_garbage = 0;
+        if let Some(packets) = &mut self.garbage_packets {
+            for packet in packets.iter_mut() {
+                packet.ready_in = packet.ready_in.saturating_sub(self.next_lock_frames);
+            }
+            let mut remaining = if cleared > 0 {
+                attack
+            } else {
+                self.garbage_cap
+            };
+            for packet in packets.iter_mut() {
+                if cleared == 0 && packet.ready_in > 0 {
+                    continue;
+                }
+                let used = remaining.min(packet.amount);
+                packet.amount -= used;
+                remaining -= used;
+                if cleared > 0 {
+                    self.last_canceled_garbage += used;
+                } else {
+                    self.last_received_garbage += used;
+                }
+            }
+            packets.retain(|p| p.amount > 0);
+            self.sync_garbage_totals();
+        } else {
+            if cleared > 0 {
+                let pending = self.pending_garbage.min(attack);
+                self.pending_garbage -= pending;
+                let queued = self.queued_garbage.min(attack - pending);
+                self.queued_garbage -= queued;
+                self.last_canceled_garbage = pending + queued;
+            } else {
+                self.last_received_garbage = self.pending_garbage.min(self.garbage_cap);
+                self.pending_garbage -= self.last_received_garbage;
+            }
+            self.pending_garbage += self.queued_garbage;
+            self.queued_garbage = 0;
+        }
+        self.next_lock_frames = self.frames_per_piece;
+        if self.last_received_garbage > 0 {
+            // The future hole is unknown; use the last known hole for lookahead.
+            if self.board.highest_row() + self.last_received_garbage as usize >= BOARD_HEIGHT - 3 {
+                self.game_over = true;
+            }
+            self.board.spawn_garbage(
+                self.last_received_garbage as i32,
+                self.last_garbage_hole_x as i32,
+            );
+        }
+    }
+
     /// Place a piece on the board and advance to the next piece.
     /// Returns the number of lines cleared.
     pub fn do_move(&mut self, m: Move) -> u32 {
         self.last_perfect_clear = false;
+        self.last_canceled_garbage = 0;
+        self.last_received_garbage = 0;
         if self.game_over || !self.current_known {
             self.last_attack = 0;
             return 0;
@@ -319,18 +420,9 @@ impl GameState {
             attack_sent += 10;
         }
 
-        // Garbage Canceling & Pushing
-        if cleared > 0 {
-            let canceled = self.pending_garbage.min(attack_sent);
-            self.pending_garbage -= canceled;
-        } else {
-            let garbage_to_push = self.pending_garbage.min(8);
-            if garbage_to_push > 0 {
-                self.board
-                    .spawn_garbage(garbage_to_push as i32, self.last_garbage_hole_x as i32);
-                self.pending_garbage -= garbage_to_push;
-            }
-        }
+        // Cancel all known packets, including those that have not arrived yet.
+        // Only ready packets rise on a non-clear. Taking garbage is not cancellation.
+        self.resolve_search_garbage(cleared, attack_sent);
 
         self.last_attack = attack_sent;
         self.pieces_placed += 1;
@@ -375,6 +467,8 @@ impl GameState {
     /// Returns (lines_cleared, attack_sent)
     pub fn do_move_battle(&mut self, m: Move, opponent: &mut GameState) -> (u32, u32) {
         self.last_perfect_clear = false;
+        self.last_canceled_garbage = 0;
+        self.last_received_garbage = 0;
         if self.game_over || !self.current_known {
             self.last_attack = 0;
             return (0, 0);
@@ -451,6 +545,7 @@ impl GameState {
 
             // Calculate remaining attack sent to opponent
             let garbage_canceled = original_garbage - (self.pending_garbage + self.queued_garbage);
+            self.last_canceled_garbage = garbage_canceled;
             let mut remaining_attack = attack_sent;
 
             if garbage_canceled > 0 {
@@ -480,6 +575,7 @@ impl GameState {
                 }
 
                 let lines_to_spawn = self.pending_garbage.min(8);
+                self.last_received_garbage = lines_to_spawn;
                 self.board
                     .spawn_garbage(lines_to_spawn as i32, self.last_garbage_hole_x as i32);
                 self.pending_garbage -= lines_to_spawn;
