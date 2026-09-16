@@ -93,7 +93,11 @@ TETR.IO 및 로컬 환경에서 작동하는 고성능 4-Wide 테트리스 강�
   cargo run --release --bin battle-gui
   ```
 
-### 2. TETR.IO 봇 클라이언트 실행 (Bun / TS)
+### 2. SSH 서버에서 빌드·호스팅
+
+Linux 서버에서는 계정 설정(`tetrio-bot/.env`) 후 저장소 루트에서 `./up.sh`를 실행하면 GUI 없이 컴파일하고 봇을 시작합니다. `./up.sh status`, `./up.sh logs`, `./up.sh stop`으로 관리합니다. 재부팅 후 자동 실행을 위한 systemd 설정과 설치 순서는 [호스팅 가이드](docs/HOSTING.md)를 참고하세요.
+
+### 3. TETR.IO 봇 클라이언트 직접 실행 (Bun / TS)
 
 TETR.IO 서버에 로그인하여 커스텀 멀티플레이어 룸에서 봇을 구동합니다.
 
@@ -105,13 +109,13 @@ TETR.IO 서버에 로그인하여 커스텀 멀티플레이어 룸에서 봇을 
 
 1. **Rust 어댑터 바이너리 빌드**
    ```bash
-   cargo build --release
+   cargo build --locked --release --no-default-features --bin triangle-adapter
    ```
 
 2. **TETR.IO 봇 디렉토리 이동 및 의존성 설치**
    ```bash
    cd tetrio-bot
-   bun install
+   bun install --frozen-lockfile
    ```
 
 3. **환경 변수 파일 생성**

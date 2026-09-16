@@ -1,0 +1,16 @@
+[Unit]
+Description=Invincible TETR.IO bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Assumes the repo is cloned to ~/invincible_bot_v2. Adjust this path if needed.
+ExecStart=%h/invincible_bot_v2/up.sh run
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=15
+KillMode=control-group
+
+[Install]
+WantedBy=default.target

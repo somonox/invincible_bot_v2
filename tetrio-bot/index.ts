@@ -1,6 +1,7 @@
 import { Client } from "@haelp/teto";
 import { BotWrapper, adapters } from "@haelp/teto/utils";
 import path from "path";
+import { existsSync } from "node:fs";
 
 // Monkey-patch BotWrapper.frames to space out consecutive movements/rotations with frame gaps
 (BotWrapper as any).frames = (engine: any, keys: string[]) => {
@@ -63,6 +64,16 @@ BotWrapper.prototype.tick = async function (this: any, engine: any, events: any,
   return [];
 };
 
+
+const adapterPath = process.env.BOT_ADAPTER_PATH
+  ? path.resolve(process.env.BOT_ADAPTER_PATH)
+  : path.join((import.meta as any).dir, "../target/release/triangle-adapter" + (process.platform === "win32" ? ".exe" : ""));
+for (const name of ["BOT_USERNAME", "BOT_PASSWORD"]) {
+  if (!process.env[name]) throw new Error(`Missing ${name}. Set it in tetrio-bot/.env or the service environment.`);
+}
+if (!existsSync(adapterPath)) {
+  throw new Error(`Adapter binary not found: ${adapterPath}. Run ./up.sh build first.`);
+}
 
 const masterClient = await Client.create({
   username: process.env.BOT_USERNAME!,
@@ -237,7 +248,7 @@ async function runWorkerForRoom(roomid: string) {
       client.social.status("online", "lobby_ig:X-PRIV");
 
       const adapter = new adapters.IO({
-        path: path.join((import.meta as any).dir, "../target/release/triangle-adapter"),
+        path: adapterPath,
         verbose: false,
       });
 

@@ -33,3 +33,6 @@ target/
 
 # Temp clone of fusion
 fusion_temp/
+
+# Local daemon PID / control lock
+.run/

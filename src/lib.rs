@@ -14,6 +14,7 @@ pub mod rl {
     pub mod search;
 }
 
+#[cfg(feature = "gui")]
 pub mod gui {
     pub mod widgets;
 }
