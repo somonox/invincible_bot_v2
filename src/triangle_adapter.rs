@@ -279,9 +279,11 @@ fn main() {
                     let selected = result.and_then(|plan| executable(plan.choice.0, plan.choice.1));
                     if let Some(plan) = result {
                         eprintln!(
-                            "[4wide-bot] {} (incoming {})",
+                            "[4wide-bot] {} (incoming {}, preview attack {}, peak {})",
                             plan.mode.label(),
-                            game_state.incoming_garbage()
+                            game_state.incoming_garbage(),
+                            plan.expected_attack,
+                            plan.peak_attack
                         );
                     }
                     let used_plan = selected.is_some();
@@ -329,7 +331,9 @@ fn main() {
                         "keys": keys,
                         "data": {
                             "strategy": if used_plan { result.map(|p| p.mode.label()) } else { Some("Executable fallback".into()) },
-                            "incoming": game_state.incoming_garbage()
+                            "incoming": game_state.incoming_garbage(),
+                            "expectedAttack": if used_plan { result.map(|p| p.expected_attack) } else { None },
+                            "peakAttack": if used_plan { result.map(|p| p.peak_attack) } else { None }
                         }
                     }));
                 } else {

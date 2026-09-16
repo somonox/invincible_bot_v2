@@ -2,7 +2,7 @@
 
 The GUI left bot keeps the Combo objective. The right bot and online adapter use
 `find_hybrid_move`. There is no opponent combo threshold or threshold slider.
-The GUI reports the selected strategy and predicted cancellation. Shared depth,
+The GUI reports strategy, predicted cancellation and attack. Shared depth,
 paired turns, current combo display, SRS-X and spin settings are preserved.
 
 Every placement is planned again from the latest actual board and incoming queue:
@@ -11,14 +11,22 @@ Every placement is planned again from the latest actual board and incoming queue
    gcd(width, 4) to pursue PC. On a four-wide board, pieces and clears cannot
    change that remainder. Incoming garbage does not bypass this condition;
    reconsider it after garbage actually changes the board.
-2. With incoming garbage, search a full visible horizon. Prefer fewer received
-   lines first, then a smaller sum of outstanding garbage after each placement
-   (earlier cancellation). With equal defensive outcomes, prefer PC when the
-   residue allows it; otherwise preserve the clear chain. An immediate PC is
-   allowed when it cancels efficiently. A multi-piece PC setup can lose to an
-   immediate combo clear when that prevents garbage from rising.
-3. With an empty garbage queue, probe for a reachable PC. If none is discovered
-   in the bounded beam/preview, use Combo. Pure PC and Combo APIs remain available.
+2. Search a common full preview horizon. With incoming garbage, fewer received
+   lines remain the first priority. Among equally safe paths, maximize total
+   generated attack, including combo multipliers, spins, B2B and PC bonuses.
+   Early cancellation is now a tie-breaker, so safe line blocking can buy time
+   for a larger multiplied hit. There is no combo count that triggers cash-out.
+3. With an empty queue, also compare full-horizon damage instead of returning the
+   first discovered PC. A PC competes through its actual attack bonus. Equal
+   damage prefers earlier cancellation, sustained clearing, PC (when residue
+   allows it), then board quality. Pure PC and pure Combo APIs remain unchanged.
+
+The 64-node beam reserves half its slots for damage, a quarter for clear-chain
+continuation and a quarter for PC/board setups. These are search budgets rather
+than strategic thresholds. This prevents small early clears from being pruned
+before a later spin/quad pays off. Final ranking uses attack actually generated
+within the visible horizon, with no reward for imagined future pieces or stacking
+height by itself. The GUI and adapter report total preview attack and largest hit.
 
 Both pending and future packets can be canceled. A non-clearing placement only
 receives ready garbage, up to the cap. Received lines and canceled lines are
@@ -55,3 +63,28 @@ Existing search, SRS-X, PC and paired GUI tests remain required.
 The JSON files under `docs/benchmarks/hybrid_*` are historical measurements from
 the old combo-threshold policy at commit `dfe324d`; they are not measurements of
 this garbage-aware policy. No live-match win-rate improvement is claimed.
+
+Multiplier regression tests compare against exhaustive depth-three enumeration.
+On rows `[7,7,7,7,3,1]`, T current, I hold and O/I/S preview, internal combo 9,
+immediate maximum attack gives at most 17 total lines over three placements;
+small clears followed by a multiplied quad yield 19. With eight incoming lines,
+the latter path still receives zero garbage. The same investment preference is
+verified at internal combos 0, 2 and 5, while a one-placement horizon spends the
+quad immediately. These are engine fixtures, not live-match win-rate evidence.
+
+A fixed-stream depth-six check (four seeds, 80 placements each, three-cell
+residue, no incoming attacks) completed all 320 placements for both policies:
+
+| Policy | Generated attack | Clear-chain breaks | Mean search time |
+| --- | ---: | ---: | ---: |
+| Multiplier hybrid | 1486 | 13 | 23.1 ms |
+| Pure Combo control | 1432 | 6 | 22.0 ms |
+
+The hybrid produced 3.8% more attack in this sample while breaking chains more
+often; maximizing preview damage does not guarantee the longest combo or better
+win rate. The benchmark now preserves B2B between placements, so compare these
+new runs to each other rather than the older JSON files. Reproduce with
+`cargo run --release --example search_bench -- 4 80 6 hybrid-residue` and
+`cargo run --release --example search_bench -- 4 80 6 combo-residue`.
+Raw runs: [hybrid](benchmarks/multiplier_residue.json),
+[control](benchmarks/multiplier_combo_control.json).

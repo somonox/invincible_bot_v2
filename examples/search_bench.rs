@@ -23,6 +23,8 @@ fn main() {
     let mut records = Vec::new();
     let mut total_clears = 0usize;
     let mut total_breaks = 0usize;
+    let mut total_attack = 0u32;
+    let mut largest_hit = 0u32;
     for seed in 0..games {
         let mut rng = StdRng::seed_from_u64(seed as u64 + 20260916);
         let mut stream = Vec::new();
@@ -48,6 +50,8 @@ fn main() {
         let mut pcs = 0;
         let mut hold = None;
         let mut combo = 0;
+        let (mut b2b, mut b2b_level, mut b2b_charge) = (false, 0, 0);
+        let mut attack = 0u32;
         let mut index = 0;
         let mut max_combo = 0;
         let mut placed = 0;
@@ -60,9 +64,11 @@ fn main() {
                 hold,
                 stream[index + 1..index + 6].to_vec(),
                 combo,
-                false,
+                b2b,
                 0,
             );
+            state.b2b_level = b2b_level;
+            state.b2b_charge = b2b_charge;
             let start = Instant::now();
             let choice = if mode.starts_with("hybrid") {
                 let plan = four_wide_bot::rl::search::find_hybrid_move(
@@ -96,6 +102,9 @@ fn main() {
             }
             let lines = state.do_move(m);
             placed += 1;
+            attack += state.last_attack;
+            largest_hit = largest_hit.max(state.last_attack);
+            (b2b, b2b_level, b2b_charge) = (state.b2b, state.b2b_level, state.b2b_charge);
             pcs += usize::from(state.last_perfect_clear);
             if lines > 0 {
                 clears += 1;
@@ -113,10 +122,11 @@ fn main() {
             }
         }
         total_pcs += pcs;
+        total_attack += attack;
         total_clears += clears;
         total_breaks += breaks;
         records.push(
-            json!({"seed": seed, "placed": placed, "clear_moves": clears,
+            json!({"seed": seed, "placed": placed, "attack":attack, "clear_moves": clears,
             "perfect_clears": pcs, "combo_breaks": breaks, "max_combo": max_combo}),
         );
         eprintln!(
@@ -130,6 +140,7 @@ fn main() {
         serde_json::to_string_pretty(&json!({
             "games": records, "depth": depth, "decisions":decisions,"opponent_combo":opponent_combo, "searches": n, "objective": mode, "perfect_clears": total_pcs,
             "clear_moves": total_clears, "combo_breaks": total_breaks,
+            "attack":total_attack, "largest_hit":largest_hit,
             "p50_ms": times[n / 2], "p95_ms": times[(n * 95 / 100).min(n - 1)],
             "mean_ms": times.iter().sum::<f64>() / n as f64,
         }))

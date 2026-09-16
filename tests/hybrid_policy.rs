@@ -6,10 +6,7 @@ use four_wide_bot::engine::{
 use four_wide_bot::rl::{
     agent::get_all_next_states,
     features::Weights,
-    search::{
-        find_best_move_for_objective, find_hybrid_move, pc_residue_possible, Evaluator, HybridMode,
-        Objective,
-    },
+    search::{find_hybrid_move, pc_residue_possible, Evaluator, HybridMode},
 };
 fn state(rows: &[u16], piece: Piece, queue: &[Piece]) -> GameState {
     let mut board = Board::new(4);
@@ -149,21 +146,19 @@ fn queued_garbage_can_be_canceled_before_arrival_and_zero_attack_only_blocks() {
     assert_eq!(next.pending_garbage, 8 - next.last_canceled_garbage);
 }
 #[test]
-fn empty_queue_returns_to_pc_and_failed_probe_uses_combo() {
+fn empty_queue_can_plan_pc_and_unavailable_pc_uses_multiplier_attack() {
     let mut s = state(&[3, 3], Piece::T, &[Piece::S]);
     s.hold_used = true;
     let p = plan(&s, 1);
-    assert_eq!(p.mode, HybridMode::ComboNoVisiblePc);
+    assert_eq!(p.mode, HybridMode::ComboMultiplier);
     assert_eq!(
-        p.choice,
-        find_best_move_for_objective(
-            &s,
-            None,
-            Evaluator::Static(&Weights::default()),
-            1,
-            Objective::Combo
-        )
-        .unwrap()
+        p.expected_attack,
+        get_all_next_states(&s)
+            .iter()
+            .filter(|(n, _, _)| !n.game_over)
+            .map(|(n, _, _)| n.last_attack)
+            .max()
+            .unwrap()
     );
     let mut s = state(&[], Piece::O, &[Piece::O, Piece::S]);
     s.pending_garbage = 4;

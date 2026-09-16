@@ -43,6 +43,7 @@ struct PairedPlan {
     b: BotPlan,
     depth: usize,
     hybrid_mode: Option<HybridMode>,
+    hybrid_damage: Option<(u32, u32)>,
 }
 
 struct BattleApp {
@@ -75,6 +76,7 @@ struct BattleApp {
     last_search_b: Duration,
     active_depth: usize,
     hybrid_mode: Option<HybridMode>,
+    hybrid_damage: Option<(u32, u32)>,
     meta_net_a: MetaPolicyNetwork,
     weights_b: Weights,
 
@@ -132,6 +134,7 @@ impl BattleApp {
             last_search_b: Duration::ZERO,
             active_depth: 6,
             hybrid_mode: None,
+            hybrid_damage: None,
             meta_net_a: MetaPolicyNetwork::default(),
             weights_b: Weights::default(),
 
@@ -174,6 +177,7 @@ impl BattleApp {
         self.pair_rx = None;
         self.pair_plan = None;
         self.hybrid_mode = None;
+        self.hybrid_damage = None;
         self.animation_ready = [false; 2];
         self.animation_stuck = [0; 2];
         self.last_pair_move_time = Instant::now();
@@ -226,6 +230,7 @@ impl BattleApp {
             );
             let choice = plan.map(|p| p.choice);
             let hybrid_mode = plan.map(|p| p.mode);
+            let hybrid_damage = plan.map(|p| (p.expected_attack, p.peak_attack));
             let b = BotPlan {
                 choice,
                 elapsed: start.elapsed(),
@@ -237,6 +242,7 @@ impl BattleApp {
                     b,
                     depth,
                     hybrid_mode,
+                    hybrid_damage,
                 });
             }
         });
@@ -307,6 +313,7 @@ impl BattleApp {
                     self.pair_rx = None;
                     self.active_depth = plan.depth;
                     self.hybrid_mode = plan.hybrid_mode;
+                    self.hybrid_damage = plan.hybrid_damage;
                     self.last_search_a = plan.a.elapsed;
                     self.last_search_b = plan.b.elapsed;
                     let (Some((target_a, hold_a)), Some((target_b, hold_b))) =
@@ -772,7 +779,10 @@ impl eframe::App for BattleApp {
                     .map(|m| m.label())
                     .unwrap_or_else(|| "B: deciding next strategy...".into()),
             );
-            ui.label("Switching: incoming garbage / cancellation");
+            if let Some((total, peak)) = self.hybrid_damage {
+                ui.label(format!("Preview attack: {total} / largest hit: {peak}"));
+            }
+            ui.label("Switching: garbage safety / multiplier damage over preview");
             ui.label("Current Combo: first clear = 0, second consecutive clear = 1.");
             ui.label("Rotation: SRS-X (90 and 180 degrees)");
             let mut mode = self.game_state.spin_mode;
@@ -882,6 +892,7 @@ mod tests {
             },
             depth: 3,
             hybrid_mode: None,
+            hybrid_damage: None,
         }
     }
 

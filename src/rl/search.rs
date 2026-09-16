@@ -18,8 +18,19 @@ const BEAM_WIDTH: usize = 64;
 pub enum Objective {
     PerfectClear,
     Combo,
+    AttackPc,
+    AttackCombo,
     DefensePc,
     DefenseCombo,
+}
+
+impl Objective {
+    fn is_attack(self) -> bool {
+        matches!(
+            self,
+            Self::AttackPc | Self::AttackCombo | Self::DefensePc | Self::DefenseCombo
+        )
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -54,6 +65,7 @@ struct Node {
     perfect_clears: usize,
     quality: f32,
     attack: u32,
+    peak_attack: u32,
     received: u32,
     exposure: u64,
     first_cancel: u32,
@@ -63,13 +75,29 @@ struct Node {
 impl Node {
     fn compare(&self, other: &Self, objective: Objective) -> Ordering {
         if matches!(objective, Objective::DefensePc | Objective::DefenseCombo) {
-            let safety = other
-                .received
-                .cmp(&self.received)
-                .then(other.exposure.cmp(&self.exposure));
+            let safety = other.received.cmp(&self.received);
             if safety != Ordering::Equal {
                 return safety;
             }
+        }
+        if objective.is_attack() {
+            // Compare damage over the SAME preview horizon. A later multiplied
+            // spin/quad can repay small early clears; neither combo count nor
+            // remaining board height may override that realized payoff.
+            return self
+                .attack
+                .cmp(&other.attack)
+                .then(other.exposure.cmp(&self.exposure))
+                .then(self.initial_chain.cmp(&other.initial_chain))
+                .then(self.clears.cmp(&other.clears))
+                .then_with(|| {
+                    if matches!(objective, Objective::AttackPc | Objective::DefensePc) {
+                        self.perfect_clears.cmp(&other.perfect_clears)
+                    } else {
+                        Ordering::Equal
+                    }
+                })
+                .then(self.quality.total_cmp(&other.quality));
         }
         if matches!(objective, Objective::PerfectClear | Objective::DefensePc) {
             return self
@@ -134,9 +162,36 @@ impl Key {
 }
 
 fn retain_best(nodes: &mut Vec<Node>, width: usize, objective: Objective) {
-    // Score each state once, before sorting; no feature extraction in comparator.
     nodes.sort_by(|a, b| b.compare(a, objective));
-    nodes.truncate(width);
+    if !objective.is_attack() || nodes.len() <= width {
+        nodes.truncate(width);
+        return;
+    }
+    // Keep investment routes alive before their damage pays off: half the beam
+    // by damage, a quarter by clear-chain continuation, a quarter by PC shape.
+    // These are search budgets, not gameplay thresholds. Final choice always
+    // uses full-horizon damage/safety, with no speculative attack reward.
+    let mut keep = vec![false; nodes.len()];
+    let mut count = 0;
+    for (ranking, quota) in [
+        (objective, width / 2),
+        (Objective::Combo, width / 4),
+        (Objective::PerfectClear, width - width / 2 - width / 4),
+    ] {
+        let mut indices: Vec<usize> = (0..nodes.len()).filter(|&i| !keep[i]).collect();
+        indices.sort_by(|&a, &b| nodes[b].compare(&nodes[a], ranking));
+        for i in indices.into_iter().take(quota) {
+            keep[i] = true;
+            count += 1;
+        }
+    }
+    debug_assert_eq!(count, width);
+    let mut index = 0;
+    nodes.retain(|_| {
+        let retained = keep[index];
+        index += 1;
+        retained
+    });
 }
 
 pub fn find_best_move(
@@ -159,7 +214,7 @@ pub enum HybridMode {
         canceled_next: u32,
         received: u32,
     },
-    ComboNoVisiblePc,
+    ComboMultiplier,
 }
 impl HybridMode {
     pub fn label(self) -> String {
@@ -174,7 +229,7 @@ impl HybridMode {
                 "{} defense: cancel {canceled_next} next, receive {received} in preview",
                 if pc { "PC" } else { "Combo" }
             ),
-            Self::ComboNoVisiblePc => "Combo: no PC found in preview".into(),
+            Self::ComboMultiplier => "Combo: multiplier attack plan".into(),
         }
     }
 }
@@ -182,6 +237,8 @@ impl HybridMode {
 pub struct HybridPlan {
     pub choice: (Move, bool),
     pub mode: HybridMode,
+    pub expected_attack: u32,
+    pub peak_attack: u32,
 }
 
 /// Necessary condition only: cells + 4*n - width*lines = 0 requires the current
@@ -201,47 +258,43 @@ pub fn pc_residue_possible(state: &GameState) -> bool {
     cells % a == 0
 }
 
-/// Keep the pure objectives available for comparison. A PC probe must actually
-/// reach a PC: its ordinary board-evaluation fallback is never a hybrid PC plan.
+/// Optimize realized multiplier damage over a common visible horizon. Report
+/// PC only when the selected continuation actually reaches one.
 pub fn find_hybrid_move(
     state: &GameState,
     opponent: Option<&GameState>,
     evaluator: Evaluator<'_>,
     depth: usize,
 ) -> Option<HybridPlan> {
-    if state.incoming_garbage() > 0 {
-        let allow_pc = pc_residue_possible(state);
-        let objective = if allow_pc {
-            Objective::DefensePc
-        } else {
-            Objective::DefenseCombo
-        };
-        // Compare complete horizons. Early return on the first PC hides the
-        // danger of remaining garbage after that PC breaks the clear chain.
-        return search(state, opponent, evaluator, depth, objective).map(|found| HybridPlan {
-            choice: found.choice,
-            mode: HybridMode::GarbageDefense {
+    let allow_pc = pc_residue_possible(state);
+    let pressure = state.incoming_garbage() > 0;
+    let objective = match (pressure, allow_pc) {
+        (true, true) => Objective::DefensePc,
+        (true, false) => Objective::DefenseCombo,
+        (false, true) => Objective::AttackPc,
+        (false, false) => Objective::AttackCombo,
+    };
+    search(state, opponent, evaluator, depth, objective).map(|found| {
+        let mode = if pressure {
+            HybridMode::GarbageDefense {
                 pc: allow_pc && found.pc_depth.is_some(),
                 canceled_next: found.first_cancel,
                 received: found.received,
-            },
-        });
-    }
-    let mode = if !pc_residue_possible(state) {
-        HybridMode::ComboResidue
-    } else {
-        if let Some(found) = search(state, opponent, evaluator, depth, Objective::PerfectClear) {
-            if let Some(placements) = found.pc_depth {
-                return Some(HybridPlan {
-                    choice: found.choice,
-                    mode: HybridMode::PerfectClear { placements },
-                });
             }
+        } else if !allow_pc {
+            HybridMode::ComboResidue
+        } else if let Some(placements) = found.pc_depth {
+            HybridMode::PerfectClear { placements }
+        } else {
+            HybridMode::ComboMultiplier
+        };
+        HybridPlan {
+            choice: found.choice,
+            mode,
+            expected_attack: found.attack,
+            peak_attack: found.peak_attack,
         }
-        HybridMode::ComboNoVisiblePc
-    };
-    find_best_move_for_objective(state, opponent, evaluator, depth, Objective::Combo)
-        .map(|choice| HybridPlan { choice, mode })
+    })
 }
 
 #[derive(Clone, Copy)]
@@ -250,6 +303,8 @@ struct SearchResult {
     pc_depth: Option<usize>,
     first_cancel: u32,
     received: u32,
+    attack: u32,
+    peak_attack: u32,
 }
 
 pub fn find_best_move_for_objective(
@@ -287,6 +342,7 @@ fn search(
         let perfect_clears = usize::from(next.last_perfect_clear);
         frontier.push(Node {
             attack: next.last_attack,
+            peak_attack: next.last_attack,
             received: next.last_received_garbage,
             exposure: next.incoming_garbage() as u64,
             first_cancel: next.last_canceled_garbage,
@@ -307,6 +363,8 @@ fn search(
         pc_depth: n.pc_depth,
         first_cancel: n.first_cancel,
         received: n.received,
+        attack: n.attack,
+        peak_attack: n.peak_attack,
     });
     if objective == Objective::PerfectClear
         && frontier.first().is_some_and(|n| n.perfect_clears > 0)
@@ -326,6 +384,7 @@ fn search(
                 let perfect_clears = node.perfect_clears + usize::from(next.last_perfect_clear);
                 let mut candidate = Node {
                     attack: node.attack + next.last_attack,
+                    peak_attack: node.peak_attack.max(next.last_attack),
                     received: node.received + next.last_received_garbage,
                     exposure: node.exposure + next.incoming_garbage() as u64,
                     first_cancel: node.first_cancel,
@@ -363,6 +422,8 @@ fn search(
             pc_depth: n.pc_depth,
             first_cancel: n.first_cancel,
             received: n.received,
+            attack: n.attack,
+            peak_attack: n.peak_attack,
         });
         // Breadth by placement depth: the first layer with a PC is the soonest
         // discovered solution. Prefer completing it over keeping a combo alive.

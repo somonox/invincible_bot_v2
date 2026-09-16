@@ -1,0 +1,55 @@
+{
+  "attack": 1486,
+  "clear_moves": 299,
+  "combo_breaks": 13,
+  "decisions": {
+    "Combo: PC needs a change in garbage": 320
+  },
+  "depth": 6,
+  "games": [
+    {
+      "attack": 477,
+      "clear_moves": 77,
+      "combo_breaks": 3,
+      "max_combo": 74,
+      "perfect_clears": 0,
+      "placed": 80,
+      "seed": 0
+    },
+    {
+      "attack": 378,
+      "clear_moves": 75,
+      "combo_breaks": 3,
+      "max_combo": 62,
+      "perfect_clears": 0,
+      "placed": 80,
+      "seed": 1
+    },
+    {
+      "attack": 290,
+      "clear_moves": 72,
+      "combo_breaks": 4,
+      "max_combo": 53,
+      "perfect_clears": 0,
+      "placed": 80,
+      "seed": 2
+    },
+    {
+      "attack": 341,
+      "clear_moves": 75,
+      "combo_breaks": 3,
+      "max_combo": 58,
+      "perfect_clears": 0,
+      "placed": 80,
+      "seed": 3
+    }
+  ],
+  "largest_hit": 36,
+  "mean_ms": 23.084631874999996,
+  "objective": "hybrid-residue",
+  "opponent_combo": null,
+  "p50_ms": 22.2411,
+  "p95_ms": 30.9439,
+  "perfect_clears": 0,
+  "searches": 320
+}
