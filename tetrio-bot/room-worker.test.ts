@@ -447,3 +447,34 @@ test("real SDK ReplayManager records outgoing self frames and incoming opponent 
   f.shutdown.abort();
   await f.promise;
 });
+
+test("HSBP rules explain blocked play and setup repairs PC/spin rules before returning host", async () => {
+  const f = fixture(true, {
+    ...REQUIRED_SETTINGS,
+    allclear_garbage: 5,
+    spinbonuses: "handheld",
+  });
+  await until(() => f.calls.chats.length > 0);
+  assert.equal(f.room.self.bracket, "spectator");
+  chat(f, "human", "!bot");
+  await pause();
+  assert.ok(
+    f.calls.chats.some(
+      (m: string) =>
+        m.includes("allclear_garbage=5") && m.includes("spinbonuses=handheld"),
+    ),
+  );
+  chat(f, "human", "!setup");
+  await until(() => f.calls.transfers.length === 1);
+  assert.equal(f.room.options.allclear_garbage, 10);
+  assert.equal(f.room.options.spinbonuses, "all");
+  let tick: any;
+  f.client.emit("client.game.round.start", [
+    (fn: any) => (tick = fn),
+    engine(),
+  ]);
+  await pause();
+  assert.ok((await tick({ engine: engine(), events: [] })).keys.length > 0);
+  f.shutdown.abort();
+  await f.promise;
+});

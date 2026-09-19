@@ -86,7 +86,8 @@ masterClient.social.status("online", "menus");
   },
 );
 
-masterClient.on("social.invite", (invite) => {
+let stopping = false;
+const assignRoom = (invite: { roomid: string; sender: string }) => {
   if (stopping) return;
   const roomid = invite.roomid.trim().toLowerCase();
   const token = pool.reserve(roomid, invite.sender);
@@ -106,9 +107,18 @@ masterClient.on("social.invite", (invite) => {
     workers.delete(worker);
   });
   workers.add(worker);
-  console.log(`[4wide-bot] Room assigned (${pool.size}/${maxWorkers}).`);
-});
-let stopping = false;
+  console.log(
+    `[4wide-bot] Room ${roomid} assigned (${pool.size}/${maxWorkers}).`,
+  );
+};
+masterClient.on("social.invite", assignRoom);
+// Optional explicit re-entry after maintenance; use the same pool and lifecycle.
+if (process.env.BOT_START_ROOM && process.env.BOT_START_INVITER) {
+  assignRoom({
+    roomid: process.env.BOT_START_ROOM,
+    sender: process.env.BOT_START_INVITER,
+  });
+}
 const stop = async () => {
   if (stopping) return;
   stopping = true;

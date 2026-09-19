@@ -30,6 +30,14 @@ export function roomProblems(options: Record<string, any>) {
   if (!SPINS.has(effective.spinbonuses)) problems.push("spinbonuses");
   return problems;
 }
+export function roomProblemDetails(options: Record<string, any>) {
+  const effective = { ...DEFAULTS, ...options };
+  return roomProblems(options).map((key) =>
+    key === "spinbonuses"
+      ? `spinbonuses=${effective.spinbonuses} (use all, all-mini+ or T-spins)`
+      : `${key}=${effective[key as keyof typeof effective]} (required ${REQUIRED_SETTINGS[key]})`,
+  );
+}
 export function requiredChanges(options: Record<string, any>) {
   const changes = Object.entries(REQUIRED_SETTINGS)
     .filter(([k, v]) => options[k] !== v)

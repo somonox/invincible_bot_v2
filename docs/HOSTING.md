@@ -109,3 +109,11 @@ end-to-end difference was small. `./up.sh build` does not start a stopped servic
 
 See [ARM measurements](ARM_OPTIMIZATION.md) for the measured speedup, unchanged
 move-sequence checks, limits and reproduction commands.
+
+## Rejoin a room after maintenance
+
+For an explicit recovery, set both `BOT_START_ROOM` and `BOT_START_INVITER` (the
+original inviter user ID) in the service environment before startup. The room
+uses the normal worker pool, permission checks and `!setup` flow. Clear these
+variables after startup for one-time re-entry. Neither variable changes room
+settings or grants the bot host permission.

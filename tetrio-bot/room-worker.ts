@@ -5,6 +5,7 @@ import {
   parsePps,
   requiredChanges,
   roomProblems,
+  roomProblemDetails,
 } from "./service-policy";
 import { withTimeout } from "./timeout";
 import type { ReplayStore } from "./replay-store";
@@ -30,6 +31,8 @@ export async function runRoomWorker(
     faulted = false,
     roomPps = options.defaultPps;
   let applyingSettings = false;
+  let lastStatus = "";
+  let pauseReason = "";
   let finish!: () => void;
   const left = new Promise<void>((resolve) => {
     finish = () => {
@@ -68,6 +71,7 @@ export async function runRoomWorker(
   const notice = async (key: string, message: string) => {
     if (closing || !room || Date.now() - (notices.get(key) ?? 0) < 5000) return;
     notices.set(key, Date.now());
+    console.log(`[Worker-${roomid}] ${message}`);
     await withTimeout(
       Promise.resolve(room.chat(message)),
       5000,
@@ -107,6 +111,7 @@ export async function runRoomWorker(
   };
   const suspend = async (message: string) => {
     faulted = true;
+    pauseReason = message;
     stopRound();
     if (room)
       await withTimeout(
@@ -134,6 +139,11 @@ export async function runRoomWorker(
           return;
         }
         let problems = roomProblems(room.options ?? {});
+        const status = `${room.state}; bracket=${room.self?.bracket}; ${roomProblemDetails(room.options ?? {}).join("; ") || (faulted ? pauseReason : "settings ready")}`;
+        if (status !== lastStatus) {
+          lastStatus = status;
+          console.log(`[Worker-${roomid}] ${status}`);
+        }
         if (problems.length && room.self?.bracket !== "spectator") {
           stopRound();
           await withTimeout(
@@ -153,7 +163,7 @@ export async function runRoomWorker(
         if (problems.length)
           await notice(
             "settings",
-            `Bot requires SRS-X, 4x26, hold/180/hard drop, multiplier and combo blocking. Fix: ${problems.join(", ")}. Give the bot host, then use !setup to apply settings.`,
+            `Bot requires SRS-X, 4x26, hold/180/hard drop, multiplier and combo blocking. Fix: ${roomProblemDetails(room.options ?? {}).join("; ")}. Give the bot host, then use !setup to apply settings.`,
           );
       } while (checkAgain && !closing);
     } finally {
@@ -239,9 +249,17 @@ export async function runRoomWorker(
       const command = parts[0].toLowerCase();
       if (!["!pps", "!bot", "!leave", "!setup"].includes(command)) return;
       if (command === "!bot") {
+        const problems = roomProblemDetails(room.options ?? {});
+        const status = problems.length
+          ? `Blocked: ${problems.join("; ")}. Give the bot host and use !setup.`
+          : faulted
+            ? pauseReason
+            : round?.ready
+              ? "Playing."
+              : "Ready; waiting for the next round.";
         await notice(
           "status",
-          `4wide bot: SRS-X, PPS ${roomPps}/5. Matches are saved as .ttrm replays. !setup applies required settings and returns host (bot needs host). !pps <0.1-5>, !leave (host/inviter).`,
+          `4wide bot: ${status} SRS-X, PPS ${roomPps}/5. Matches are saved as .ttrm replays. !setup applies required settings and returns host (bot needs host). !pps <0.1-5>, !leave (host/inviter).`,
         );
         return;
       }
@@ -385,7 +403,12 @@ export async function runRoomWorker(
       stopRound();
       // Self.init emits this event during Game construction. Use the passed
       // engine, not client.game (which may still refer to the previous round).
-      if (room.self?.bracket !== "player" || faulted) return;
+      if (room.self?.bracket !== "player" || faulted) {
+        console.log(
+          `[Worker-${roomid}] Round skipped: bracket=${room.self?.bracket}, ${pauseReason || roomProblemDetails(room.options ?? {}).join("; ")}`,
+        );
+        return;
+      }
       const problems = engineProblems(engine);
       if (problems.length) {
         void suspend(`Round blocked: unsupported ${problems.join(", ")}.`);
@@ -476,6 +499,9 @@ export async function runRoomWorker(
             return;
           }
           current.ready = true;
+          console.log(
+            `[Worker-${roomid}] Adapter ready for ${engine.board.width}x${engine.board.height}.`,
+          );
         })
         .catch((error) =>
           failRound(`Bot initialization failed: ${error.message}`),

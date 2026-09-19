@@ -27,7 +27,8 @@ existing [rule limitations](TETRIO_RULES.md) still apply.
   to block play until fixed.
 - `!leave` removes the worker from the room.
 - `!pps` and `!leave` require the room host or original inviter.
-- `!bot` displays status and help for anyone in the room.
+- `!bot` displays status and help, including actual incompatible values and
+  required replacements. Room status changes and blocked rounds are also logged.
 - The pool defaults to 20 rooms, at most two per inviter, with
   duplicate room invitations ignored. Reservations are released on exit/failure.
 - Each worker searches independently, as before; there is no shared search queue
