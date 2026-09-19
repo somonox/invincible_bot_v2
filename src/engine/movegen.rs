@@ -15,32 +15,94 @@ pub struct SearchState {
 /// Call only after a successful rotation. Translation (including a nonzero drop)
 /// clears this result. Fin/TST upgrades apply only to the matching quarter-turn kick.
 pub fn detect_spin(board: &Board, piece: Piece, s: SearchState, fin: bool, mode: SpinMode) -> Spin {
-    if board.fits(piece, s.rotation, s.x, s.y - 1) {
+    if mode == SpinMode::None || board.fits(piece, s.rotation, s.x, s.y - 1) {
         return Spin::None;
     }
-    if piece == Piece::T {
+    if mode == SpinMode::Stupid {
+        return Spin::Full;
+    }
+    let mut corner_spin = Spin::None;
+    if piece == Piece::T && mode != SpinMode::MiniOnly {
         let corners =
             [(-1, 1), (1, 1), (1, -1), (-1, -1)].map(|(dx, dy)| board.occupied(s.x + dx, s.y + dy));
         if corners.iter().filter(|&&c| c).count() >= 3 {
             let front = s.rotation as usize;
-            return if fin || (corners[front] && corners[(front + 1) % 4]) {
+            corner_spin = if fin || (corners[front] && corners[(front + 1) % 4]) {
                 Spin::Full
             } else {
                 Spin::Mini
             };
         }
-        if mode != SpinMode::AllMiniPlus {
-            return Spin::None;
+    }
+    if mode == SpinMode::Handheld {
+        if piece == Piece::T {
+            return corner_spin;
         }
-    } else if mode == SpinMode::TSpins {
+        // Triangle 4.2.7 cornerTable, converted from its downward Y offsets.
+        let table = match piece {
+            Piece::Z => [
+                [(-2, -1), (1, -1), (2, 0), (-1, 0)],
+                [(0, -1), (1, -2), (0, 2), (1, 1)],
+                [(-2, 0), (1, 0), (2, 1), (-1, 1)],
+                [(-1, -1), (0, -2), (0, 1), (-1, 2)],
+            ],
+            Piece::L => [
+                [(-1, -1), (0, -1), (1, 1), (-1, 1)],
+                [(-1, -1), (1, -1), (1, 0), (-1, 1)],
+                [(-1, -1), (1, -1), (1, 1), (0, 1)],
+                [(-1, 0), (1, -1), (1, 1), (-1, 1)],
+            ],
+            Piece::S => [
+                [(-1, -1), (2, -1), (1, 0), (-2, 0)],
+                [(0, -2), (1, -1), (1, 2), (0, 1)],
+                [(-1, 0), (2, 0), (1, 1), (-2, 1)],
+                [(-1, -2), (0, -1), (-1, 1), (0, 2)],
+            ],
+            Piece::J => [
+                [(0, -1), (1, -1), (1, 1), (-1, 1)],
+                [(-1, -1), (1, 0), (1, 1), (-1, 1)],
+                [(-1, -1), (1, -1), (0, 1), (-1, 1)],
+                [(-1, -1), (1, -1), (1, 1), (-1, 0)],
+            ],
+            _ => return Spin::None,
+        };
+        return if table[s.rotation as usize]
+            .iter()
+            .filter(|&&(dx, dy)| board.occupied(s.x + dx, s.y - dy))
+            .count()
+            >= 3
+        {
+            Spin::Full
+        } else {
+            Spin::None
+        };
+    }
+    if mode == SpinMode::TSpins {
+        return corner_spin;
+    }
+    if piece == Piece::T && matches!(mode, SpinMode::All | SpinMode::AllMini) {
+        return corner_spin;
+    }
+    if mode == SpinMode::TSpinsPlus && piece != Piece::T {
         return Spin::None;
     }
     let immobile = [(-1, 0), (1, 0), (0, 1)]
         .iter()
         .all(|&(dx, dy)| !board.fits(piece, s.rotation, s.x + dx, s.y + dy));
+    if corner_spin == Spin::Full {
+        return Spin::Full;
+    }
+    if corner_spin == Spin::Mini {
+        return Spin::Mini;
+    }
     if !immobile {
-        Spin::None
-    } else if mode == SpinMode::AllMiniPlus {
+        return Spin::None;
+    }
+    if matches!(
+        mode,
+        SpinMode::AllMini | SpinMode::AllMiniPlus | SpinMode::TSpinsPlus | SpinMode::MiniOnly
+    ) || piece == Piece::T
+    {
         Spin::Mini
     } else {
         Spin::Full

@@ -163,7 +163,7 @@ export async function runRoomWorker(
         if (problems.length)
           await notice(
             "settings",
-            `Bot requires SRS-X, 4x26, hold/180/hard drop, multiplier and combo blocking. Fix: ${roomProblemDetails(room.options ?? {}).join("; ")}. Give the bot host, then use !setup to apply settings.`,
+            `Bot requires SRS-X and a 4x26 board. Fix: ${roomProblemDetails(room.options ?? {}).join("; ")}. Give the bot host, then use !setup to apply settings.`,
           );
       } while (checkAgain && !closing);
     } finally {
@@ -330,7 +330,7 @@ export async function runRoomWorker(
           }
           await notice(
             "setup",
-            `Settings ready: SRS-X, 4x26, hold/180/hard drop, multiplier, combo blocking and PC bonus 10. ${returned ? "Host returned." : "Host return was not confirmed; check the room host."}`,
+            `Settings ready: SRS-X and a 4x26 board. ${returned ? "Host returned." : "Host return was not confirmed; check the room host."}`,
           );
         } catch (error: any) {
           await notice(

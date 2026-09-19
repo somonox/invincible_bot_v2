@@ -208,3 +208,60 @@ fn generated_spin_paths_replay_with_the_same_final_spin() {
     }
     assert!(checked >= 3, "checked only {checked} spin paths");
 }
+
+#[test]
+fn handheld_halves_non_t_spin_damage_before_the_combo_multiplier() {
+    let (mut state, m) = clear_state(Spin::Full, 2, 4, 0);
+    state.spin_mode = SpinMode::Handheld;
+    state.do_move(m);
+    assert_eq!(state.last_attack, 4); // (4 / 2) * (1 + .25 * 4)
+}
+#[test]
+fn handheld_corner_rules_differ_from_immobility() {
+    let mut b = Board::new(6);
+    // L north corners around pivot (2,1): (1,2),(2,2),(3,0),(1,0).
+    b.rows[0] = (1 << 1) | (1 << 3);
+    b.rows[2] = 1 << 1;
+    let s = SearchState {
+        rotation: Rotation::North,
+        x: 2,
+        y: 1,
+    };
+    assert!(b.fits(Piece::L, s.rotation, s.x, s.y));
+    assert_eq!(
+        detect_spin(&b, Piece::L, s, false, SpinMode::Handheld),
+        Spin::Full
+    );
+    assert_eq!(
+        detect_spin(&b, Piece::L, s, false, SpinMode::All),
+        Spin::None
+    );
+    assert_eq!(
+        detect_spin(&b, Piece::L, s, false, SpinMode::None),
+        Spin::None
+    );
+}
+#[test]
+fn pc_bonus_and_combo_tables_are_room_settings() {
+    use four_wide_bot::engine::header::ComboMode;
+    for bonus in [0, 5, 10] {
+        let mut b = Board::new(4);
+        b.rows[0] = 3;
+        b.rows[1] = 3;
+        let mut s = GameState::from_triangle(b, Piece::O, None, vec![Piece::T], 0, false, 0);
+        s.pc_bonus = bonus;
+        s.do_move(Move::new(Piece::O, Rotation::North, 2, 0));
+        assert_eq!(s.last_attack, 1 + bonus);
+    }
+    for (mode, expected) in [
+        (ComboMode::None, 1),
+        (ComboMode::Classic, 6),
+        (ComboMode::Modern, 4),
+        (ComboMode::Multiplier, 3),
+    ] {
+        let (mut s, m) = clear_state(Spin::None, 2, 11, 0);
+        s.combo_mode = mode;
+        s.do_move(m);
+        assert_eq!(s.last_attack, expected);
+    }
+}

@@ -39,10 +39,21 @@ test("required settings enforce SRS-X and retain supported spin variants", () =>
   assert.ok(
     roomProblems({ ...REQUIRED_SETTINGS, kickset: "SRS+" }).includes("kickset"),
   );
-  assert.ok(
-    roomProblems({ ...REQUIRED_SETTINGS, display_hold: false }).includes(
-      "display_hold",
-    ),
+  assert.deepEqual(Object.keys(REQUIRED_SETTINGS).sort(), [
+    "boardheight",
+    "boardwidth",
+    "kickset",
+  ]);
+  assert.deepEqual(
+    requiredChanges({
+      ...REQUIRED_SETTINGS,
+      allclear_garbage: 5,
+      spinbonuses: "handheld",
+      combotable: "none",
+      garbageblocking: "none",
+      room_handling: true,
+    }),
+    [],
   );
   assert.equal(
     roomProblems({ ...REQUIRED_SETTINGS, spinbonuses: "all-mini+" }).length,

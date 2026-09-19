@@ -3,14 +3,6 @@ export const REQUIRED_SETTINGS: Record<string, string | number | boolean> = {
   boardwidth: 4,
   boardheight: 26,
   kickset: "SRS-X",
-  allow180: true,
-  display_hold: true,
-  allow_harddrop: true,
-  combotable: "multiplier",
-  garbageblocking: "combo blocking",
-  allclears: true,
-  allclear_garbage: 10,
-  room_handling: false,
 };
 // Triangle 4.2.7 room messages omit unchanged defaults. The actual round engine
 // is checked independently before any adapter is started.
@@ -21,29 +13,24 @@ const DEFAULTS = {
   kickset: "SRS+",
   spinbonuses: "T-spins",
 };
-const SPINS = new Set(["all", "all-mini+", "T-spins"]);
 export function roomProblems(options: Record<string, any>) {
   const effective = { ...DEFAULTS, ...options };
   const problems = Object.entries(REQUIRED_SETTINGS)
     .filter(([k, v]) => effective[k as keyof typeof effective] !== v)
     .map(([k]) => k);
-  if (!SPINS.has(effective.spinbonuses)) problems.push("spinbonuses");
   return problems;
 }
 export function roomProblemDetails(options: Record<string, any>) {
   const effective = { ...DEFAULTS, ...options };
-  return roomProblems(options).map((key) =>
-    key === "spinbonuses"
-      ? `spinbonuses=${effective.spinbonuses} (use all, all-mini+ or T-spins)`
-      : `${key}=${effective[key as keyof typeof effective]} (required ${REQUIRED_SETTINGS[key]})`,
+  return roomProblems(options).map(
+    (key) =>
+      `${key}=${effective[key as keyof typeof effective]} (required ${REQUIRED_SETTINGS[key]})`,
   );
 }
 export function requiredChanges(options: Record<string, any>) {
   const changes = Object.entries(REQUIRED_SETTINGS)
     .filter(([k, v]) => options[k] !== v)
     .map(([k, value]) => ({ index: `options.${k}`, value }));
-  if (options.spinbonuses !== undefined && !SPINS.has(options.spinbonuses))
-    changes.push({ index: "options.spinbonuses", value: "all" });
   return changes;
 }
 export function engineProblems(e: any): string[] {
@@ -56,11 +43,6 @@ export function engineProblems(e: any): string[] {
     !e.misc.allowed.hardDrop
   )
     bad.push("180/hold/hard drop");
-  if (e.gameOptions.comboTable !== "multiplier") bad.push("combotable");
-  if (e.gameOptions.garbageBlocking !== "combo blocking")
-    bad.push("garbageblocking");
-  if (!SPINS.has(e.gameOptions.spinBonuses)) bad.push("spinbonuses");
-  if (!e.pc || e.pc.garbage !== 10) bad.push("PC bonus");
   if (e.handling.sdf !== 41 || e.handling.arr !== 0) bad.push("handling");
   return bad;
 }

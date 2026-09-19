@@ -149,7 +149,23 @@ pub enum SpinMode {
     #[default]
     All,
     AllMiniPlus,
+    AllMini,
+    AllPlus,
     TSpins,
+    TSpinsPlus,
+    MiniOnly,
+    Handheld,
+    Stupid,
+    None,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum ComboMode {
+    #[default]
+    Multiplier,
+    Classic,
+    Modern,
+    None,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

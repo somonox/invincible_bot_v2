@@ -30,7 +30,7 @@ use serde_json::{json, Value};
 use std::io::{self, BufRead, Write};
 
 use crate::engine::board::{Board, BOARD_HEIGHT};
-use crate::engine::header::{Move, Piece, SpinMode};
+use crate::engine::header::{ComboMode, Move, Piece, SpinMode};
 use crate::engine::state::{GameState, GarbagePacket};
 use crate::rl::meta_agent::MetaPolicyNetwork;
 use crate::rl::search::{find_hybrid_move, Evaluator};
@@ -159,6 +159,8 @@ fn main() {
     let mut board_width: usize = 4;
     let mut board_height: i32 = 20;
     let mut spin_mode = SpinMode::All;
+    let mut pc_bonus = 10;
+    let mut combo_mode = ComboMode::Multiplier;
     let meta_net = if std::path::Path::new("meta_net.json").exists() {
         if let Ok(file_content) = std::fs::read_to_string("meta_net.json") {
             if let Ok(net) = serde_json::from_str::<MetaPolicyNetwork>(&file_content) {
@@ -210,16 +212,8 @@ fn main() {
 
         match msg_type {
             "config" => {
-                if msg["kicks"].as_str() != Some("SRS-X")
-                    || msg["boardWidth"].as_u64() != Some(4)
-                    || msg["comboTable"]
-                        .as_str()
-                        .is_some_and(|v| v != "multiplier")
-                    || msg["spins"]
-                        .as_str()
-                        .is_some_and(|v| !["all", "all-mini+", "T-spins"].contains(&v))
-                {
-                    eprintln!("[4wide-bot] Unsupported configuration: requires SRS-X, width 4, multiplier combo and supported spins.");
+                if msg["kicks"].as_str() != Some("SRS-X") || msg["boardWidth"].as_u64() != Some(4) {
+                    eprintln!("[4wide-bot] Unsupported configuration: requires SRS-X and width 4.");
                     std::process::exit(2);
                 }
                 let height = msg["boardHeight"].as_u64().unwrap_or(20);
@@ -229,14 +223,28 @@ fn main() {
                 }
                 board_height = height as i32;
                 configured = true;
+                pc_bonus = msg["pcGarbage"]
+                    .as_f64()
+                    .filter(|v| v.is_finite())
+                    .map(|v| v.clamp(0.0, 1000.0).floor() as u32)
+                    .unwrap_or(10);
+                combo_mode = match msg["comboTable"].as_str().unwrap_or("multiplier") {
+                    "multiplier" => ComboMode::Multiplier,
+                    "classic guideline" => ComboMode::Classic,
+                    "modern guideline" => ComboMode::Modern,
+                    _ => ComboMode::None,
+                };
                 spin_mode = match msg["spins"].as_str().unwrap_or("all") {
-                    "all-mini+" => SpinMode::AllMiniPlus,
-                    "T-spins" => SpinMode::TSpins,
                     "all" => SpinMode::All,
-                    other => {
-                        eprintln!("Unsupported spin mode {other}; using All.");
-                        SpinMode::All
-                    }
+                    "all-mini" => SpinMode::AllMini,
+                    "all-mini+" => SpinMode::AllMiniPlus,
+                    "all+" => SpinMode::AllPlus,
+                    "T-spins" => SpinMode::TSpins,
+                    "T-spins+" => SpinMode::TSpinsPlus,
+                    "mini-only" => SpinMode::MiniOnly,
+                    "handheld" => SpinMode::Handheld,
+                    "stupid" => SpinMode::Stupid,
+                    _ => SpinMode::None,
                 };
                 if msg["kicks"].as_str().is_some_and(|k| k != "SRS-X") {
                     eprintln!(
@@ -273,6 +281,8 @@ fn main() {
                     let mut game_state = build_state_from_protocol(state_msg, board_width);
                     game_state.board.spawn_height = board_height;
                     game_state.spin_mode = spin_mode;
+                    game_state.pc_bonus = pc_bonus;
+                    game_state.combo_mode = combo_mode;
                     if let Some(cap) = msg["garbageCap"].as_f64() {
                         let live_cap = cap.clamp(0.0, 40.0).floor() as u32;
                         game_state.garbage_cap =

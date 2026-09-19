@@ -282,7 +282,7 @@ pub fn find_hybrid_move(
     evaluator: Evaluator<'_>,
     depth: usize,
 ) -> Option<HybridPlan> {
-    let allow_pc = pc_residue_possible(state);
+    let allow_pc = state.pc_bonus > 0 && pc_residue_possible(state);
     let pressure = state.incoming_garbage() > 0;
     let objective = match (pressure, allow_pc) {
         (true, true) => Objective::DefensePc,

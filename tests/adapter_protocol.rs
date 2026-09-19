@@ -74,3 +74,30 @@ fn adapter_refuses_non_srs_x_configurations() {
             .contains("hardDrop"));
     }
 }
+
+#[test]
+fn room_pc_and_combo_values_are_used_without_rejecting_handheld() {
+    for bonus in [0, 5, 10] {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_triangle-adapter"))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        {
+            let mut input = child.stdin.take().unwrap();
+            writeln!(input,"{}",json!({"type":"config","boardWidth":4,"boardHeight":26,"kicks":"SRS-X","spins":"handheld","comboTable":"none","pcGarbage":bonus})).unwrap();
+            writeln!(input,"{}",json!({"type":"state","board":[["G","G",null,null],["G","G",null,null]],"current":"O","hold":null,"queue":[],"combo":10,"b2b":-1,"garbage":[]})).unwrap();
+            writeln!(input, "{}", json!({"type":"play"})).unwrap();
+        }
+        let out = child.wait_with_output().unwrap();
+        assert!(out.status.success());
+        let m = String::from_utf8(out.stdout)
+            .unwrap()
+            .lines()
+            .map(|l| serde_json::from_str::<Value>(l).unwrap())
+            .find(|m| m["type"] == "move")
+            .unwrap();
+        assert_eq!(m["data"]["expectedAttack"], 1 + bonus);
+    }
+}

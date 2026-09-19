@@ -448,33 +448,35 @@ test("real SDK ReplayManager records outgoing self frames and incoming opponent 
   await f.promise;
 });
 
-test("HSBP rules explain blocked play and setup repairs PC/spin rules before returning host", async () => {
+test("setup only changes board and kicks; handheld spins and PC 5 never block the round", async () => {
   const f = fixture(true, {
     ...REQUIRED_SETTINGS,
+    kickset: "SRS+",
     allclear_garbage: 5,
     spinbonuses: "handheld",
+    combotable: "none",
+    garbageblocking: "none",
+    allclears: false,
   });
   await until(() => f.calls.chats.length > 0);
-  assert.equal(f.room.self.bracket, "spectator");
-  chat(f, "human", "!bot");
-  await pause();
-  assert.ok(
-    f.calls.chats.some(
-      (m: string) =>
-        m.includes("allclear_garbage=5") && m.includes("spinbonuses=handheld"),
-    ),
-  );
   chat(f, "human", "!setup");
   await until(() => f.calls.transfers.length === 1);
-  assert.equal(f.room.options.allclear_garbage, 10);
-  assert.equal(f.room.options.spinbonuses, "all");
-  let tick: any;
-  f.client.emit("client.game.round.start", [
-    (fn: any) => (tick = fn),
-    engine(),
+  assert.deepEqual(f.calls.updates.flat(), [
+    { index: "options.kickset", value: "SRS-X" },
   ]);
+  assert.equal(f.room.options.allclear_garbage, 5);
+  assert.equal(f.room.options.spinbonuses, "handheld");
+  assert.equal(f.room.options.combotable, "none");
+  assert.equal(f.room.options.allclears, false);
+  let tick: any;
+  const e = engine();
+  e.pc = { garbage: 5 };
+  e.gameOptions.spinBonuses = "handheld";
+  e.gameOptions.comboTable = "none";
+  e.gameOptions.garbageBlocking = "none";
+  f.client.emit("client.game.round.start", [(fn: any) => (tick = fn), e]);
   await pause();
-  assert.ok((await tick({ engine: engine(), events: [] })).keys.length > 0);
+  assert.ok((await tick({ engine: e, events: [] })).keys.length > 0);
   f.shutdown.abort();
   await f.promise;
 });

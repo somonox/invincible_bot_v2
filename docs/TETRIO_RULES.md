@@ -35,22 +35,29 @@ Full spin single/double/triple/quad base attack is 2/4/6/10. Mini single/double/
 triple is 0/1/2. Spins that clear lines maintain B2B, just like quads. B2B chaining
 uses the logarithmic formula, followed by multiplier combo scaling and integer
 flooring. The first eligible clear starts B2B without receiving a continuation
-bonus. Search and battle share this calculation. Existing +10 PC bonus remains.
+bonus. Search and battle share this calculation. The GUI keeps its +10 PC bonus; online search reads the room PC bonus, including zero.
 
-The adapter reads `spins` from room config for these three modes. Its pathfinder
+The adapter reads `spins` from room config. In addition to the GUI modes, online
+play supports handheld corner spins (T/L/J/S/Z; non-T base attack is halved),
+all-mini, all+, T-spins+, mini-only and none. Unknown modes conservatively receive
+no predicted spin credit instead of stopping play. Nonstandard `stupid` spins
+use the grounded rotation test; credit on non-rotation placements is approximate.
+Multiplier, classic guideline, modern guideline and no-combo attack tables are
+selected from room config. `!setup` only changes width, height and kickset.
+
+The adapter Its pathfinder
 uses the same SRS-X rotation/spin helper, includes rotate180, and treats softDrop
 as a sonic drop instead of collapsing arbitrary one-cell paths. If a selected
 placement cannot be expressed by these inputs, it selects an executable fallback
-and logs the actual fallback move. Other kicksets and spin modes are reported as
-unsupported rather than claimed compatible.
+and logs the actual fallback move. Other kicksets remain unsupported.
 
 ## Scope and sources
 
 This implements the selected rotation/spin/attack profile, **not every TETR.IO
 room setting or frame-level parity**. Existing local opener cancellation,
 queued-garbage timing and Surge charge are approximations retained from the
-simulator. Arbitrary combo tables, B2B charging options, PC garbage settings,
-garbage multipliers, lock-delay resets and real network input timing are not
+simulator. B2B charging options, garbage-blocking variants, garbage multipliers,
+lock-delay resets and real network input timing are not
 fully modeled. GUI animations interpolate toward a validated move; they are not
 an exact replay of all input frames. No live login or online match was performed.
 

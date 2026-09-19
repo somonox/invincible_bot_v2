@@ -7,13 +7,17 @@ If that person has left or no previous owner was observed, it returns host to
 the command sender. Joining or transferring host alone never changes room options. The actual round engine is
 checked again before starting the Rust adapter, which also rejects other kicks.
 
-Required room settings: 4x26 board, hold/hard drop/180 rotation enabled,
-multiplier combos, combo blocking, perfect clears enabled with 10 garbage,
-and personal handling enabled (`room_handling=false`). The client uses ARR 0 and
-SDF 41. Supported spin settings (`all`, `all-mini+`, `T-spins`) are preserved;
-unsupported explicit spin settings are replaced with `all` when the bot is host.
-These checks do not promise exact prediction of every optional TETR.IO rule;
-existing [rule limitations](TETRIO_RULES.md) still apply.
+`!setup` changes exactly three options: `boardwidth=4`, `boardheight=26`, and
+`kickset=SRS-X`. PC bonus, spin mode, combo table, garbage blocking, handling and
+other room options are preserved. PC 5 and `handheld` are allowed without any
+extra setup. The adapter uses the configured PC attack and combo table, and
+supports handheld corner spins with half non-T spin damage.
+
+The current input executor still needs hold, 180 rotation and hard drop enabled,
+ARR 0 and SDF 41 to execute its paths. These are checked at round start with an
+explicit message when missing; `!setup` does not silently overwrite them.
+Other prediction limits, including garbage blocking/multiplier and B2B charging
+variants, remain approximations described in [rule limitations](TETRIO_RULES.md).
 
 ## Room commands and capacity
 

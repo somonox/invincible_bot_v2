@@ -1,5 +1,5 @@
 use crate::engine::board::{Board, BOARD_HEIGHT};
-use crate::engine::header::{Move, Piece, Rotation, Spin, SpinMode};
+use crate::engine::header::{ComboMode, Move, Piece, Rotation, Spin, SpinMode};
 use rand::seq::SliceRandom;
 use rand::thread_rng;
 use rand::Rng;
@@ -22,6 +22,8 @@ pub struct GameState {
     /// Consecutive clearing placements; displayed combo is this minus one.
     pub combo: u32,
     pub spin_mode: SpinMode,
+    pub pc_bonus: u32,
+    pub combo_mode: ComboMode,
     pub last_spin: Spin,
     pub b2b: bool,
     pub score: u32,
@@ -74,6 +76,8 @@ impl GameState {
             hold_used: false,
             combo: 0,
             spin_mode: SpinMode::All,
+            pc_bonus: 10,
+            combo_mode: ComboMode::Multiplier,
             last_spin: Spin::None,
             b2b: false,
             score: 0,
@@ -129,6 +133,8 @@ impl GameState {
             hold_used: false,
             combo,
             spin_mode: SpinMode::All,
+            pc_bonus: 10,
+            combo_mode: ComboMode::Multiplier,
             last_spin: Spin::None,
             b2b,
             score: 0,
@@ -187,7 +193,7 @@ impl GameState {
     /// Shared clear/attack accounting for search and battle. Multiplier combo and
     /// logarithmic B2B chaining follow garbageCalcV2; room-specific cancellation
     /// and the local surge approximation remain in the battle simulator.
-    fn score_clear(&mut self, cleared: u32, spin: Spin) -> u32 {
+    fn score_clear(&mut self, cleared: u32, spin: Spin, piece: Piece) -> u32 {
         self.last_spin = spin;
         if cleared == 0 {
             self.combo = 0;
@@ -221,6 +227,9 @@ impl GameState {
             (_, 4) => 4.0,
             _ => 0.0,
         };
+        if self.spin_mode == SpinMode::Handheld && piece != Piece::T && spin != Spin::None {
+            attack /= 2.0;
+        }
         let b2b_index = self.b2b_level.saturating_sub(1);
         if eligible && b2b_index > 0 {
             let log = (b2b_index as f64 * 0.8).ln_1p();
@@ -233,9 +242,18 @@ impl GameState {
         }
         let combo_index = self.combo;
         if combo_index > 0 {
-            attack *= 1.0 + 0.25 * combo_index as f64;
-            if combo_index > 1 {
-                attack = attack.max((combo_index as f64 * 1.25).ln_1p());
+            if self.combo_mode == ComboMode::Multiplier {
+                attack *= 1.0 + 0.25 * combo_index as f64;
+                if combo_index > 1 {
+                    attack = attack.max((combo_index as f64 * 1.25).ln_1p());
+                }
+            } else {
+                let table: &[u32] = match self.combo_mode {
+                    ComboMode::Classic => &[0, 1, 1, 2, 2, 3, 3, 4, 4, 4, 5],
+                    ComboMode::Modern => &[0, 1, 1, 2, 2, 2, 3, 3, 3, 3, 3, 3, 4],
+                    _ => &[0],
+                };
+                attack += table[(combo_index as usize - 1).min(table.len() - 1)] as f64;
             }
         }
         let base_score = match (spin, cleared) {
@@ -411,13 +429,13 @@ impl GameState {
         // Clear lines
         let cleared = self.board.clear_lines();
 
-        let mut attack_sent = self.score_clear(cleared, m.spin);
+        let mut attack_sent = self.score_clear(cleared, m.spin, m.piece);
 
         // Check for Perfect Clear
         if self.board.highest_row() == 0 && cleared > 0 {
             self.last_perfect_clear = true;
             self.perfect_clears += 1;
-            attack_sent += 10;
+            attack_sent += self.pc_bonus;
         }
 
         // Cancel all known packets, including those that have not arrived yet.
@@ -481,14 +499,14 @@ impl GameState {
         let cleared = self.board.clear_lines();
 
         let was_b2b_active = self.b2b;
-        let mut attack_sent = self.score_clear(cleared, m.spin);
+        let mut attack_sent = self.score_clear(cleared, m.spin, m.piece);
 
         // Apply the same perfect-clear bonus as the search/single-player engine,
         // before cancellation and before sending the remaining attack.
         if cleared > 0 && self.board.highest_row() == 0 {
             self.last_perfect_clear = true;
             self.perfect_clears += 1;
-            attack_sent += 10;
+            attack_sent += self.pc_bonus;
         }
 
         self.pieces_placed += 1;
