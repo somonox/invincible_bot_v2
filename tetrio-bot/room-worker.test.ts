@@ -1,0 +1,267 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
+import { runRoomWorker } from "./room-worker";
+import { REQUIRED_SETTINGS } from "./service-policy";
+const pause = () => new Promise((r) => setTimeout(r, 1));
+async function until(fn: () => boolean) {
+  for (let i = 0; i < 200; i++) {
+    if (fn()) return;
+    await pause();
+  }
+  assert.fail("condition did not become true");
+}
+function fixture(
+  host = true,
+  settings: any = REQUIRED_SETTINGS,
+  overrides: any = {},
+) {
+  const client: any = new EventEmitter();
+  client.user = { id: "bot" };
+  client.destroyed = false;
+  const calls: any = {
+    updates: [],
+    chats: [],
+    saved: [],
+    wrappers: [],
+    scopes: [],
+  };
+  const room: any = {
+    id: "test",
+    owner: host ? "bot" : "host",
+    options: { ...settings },
+    state: "lobby",
+    players: [
+      { _id: "bot", bracket: "spectator" },
+      { _id: "human", bracket: "player" },
+    ],
+    replay: null,
+  };
+  Object.defineProperty(room, "self", { get: () => room.players[0] });
+  Object.defineProperty(room, "isHost", { get: () => room.owner === "bot" });
+  room.switch = async (bracket: string) => {
+    room.self.bracket = bracket;
+    client.emit("room.update.bracket", { uid: "bot" });
+  };
+  room.update = async (...changes: any[]) => {
+    calls.updates.push(changes);
+    for (const c of changes)
+      room.options[c.index.replace("options.", "")] = c.value;
+    client.emit("room.update", {});
+  };
+  room.chat = async (message: string) => {
+    calls.chats.push(message);
+  };
+  client.rooms = {
+    join: async () => {
+      client.room = room;
+      return room;
+    },
+  };
+  client.destroy = async () => {
+    client.destroyed = true;
+  };
+  client.on("game.scope.start", (id: any) => calls.scopes.push(id));
+  const shutdown = new AbortController();
+  const promise = runRoomWorker("test", "human", {
+    adapterPath: "unused",
+    defaultPps: 2,
+    idleMs: 60000,
+    signal: shutdown.signal,
+    replays: {
+      limits: { maxFileBytes: 100000 },
+      save: async (_room: any, data: any, partial: any) => {
+        calls.saved.push({ data, partial });
+        return "test.ttrm";
+      },
+    } as any,
+    createClient: async () => client,
+    createAdapter: () => ({ stop() {} }),
+    createWrapper: () => {
+      const wrapper: any = {
+        config: { pps: 2 },
+        stops: 0,
+        init: async () => {},
+        stop() {
+          this.stops++;
+        },
+        tick: async () => [
+          { type: "keydown", frame: 1, data: { key: "hardDrop" } },
+        ],
+      };
+      calls.wrappers.push(wrapper);
+      return wrapper;
+    },
+    ...overrides,
+  });
+  return { client, room, calls, shutdown, promise };
+}
+const engine = () => ({
+  kickTableName: "SRS-X",
+  board: { width: 4, height: 20 },
+  misc: { allowed: { spin180: true, hold: true, hardDrop: true } },
+  gameOptions: {
+    comboTable: "multiplier",
+    garbageBlocking: "combo blocking",
+    spinBonuses: "all",
+  },
+  pc: { garbage: 10 },
+  handling: { arr: 0, sdf: 41 },
+});
+test("host fixes settings; non-host spectates until settings or host changes", async () => {
+  for (const host of [true, false]) {
+    const f = fixture(host, { ...REQUIRED_SETTINGS, kickset: "SRS+" });
+    await until(() => f.calls.chats.length > 0);
+    assert.equal(f.room.self.bracket, host ? "player" : "spectator");
+    if (!host) {
+      assert.equal(f.calls.updates.length, 0);
+      f.room.owner = "bot";
+      f.client.emit("room.update.host", "bot");
+      await until(() => f.room.self.bracket === "player");
+    }
+    assert.equal(f.room.options.kickset, "SRS-X");
+    f.shutdown.abort();
+    await f.promise;
+    assert.ok(f.client.destroyed);
+  }
+});
+test("full round engine is checked even when lobby options appear compatible", async () => {
+  const f = fixture();
+  await until(() => f.room.self.bracket === "player");
+  f.client.emit("client.game.round.start", [
+    () => {},
+    { ...engine(), kickTableName: "SRS+" },
+  ]);
+  await until(() => f.room.self.bracket === "spectator");
+  assert.equal(f.calls.wrappers.length, 0);
+  f.shutdown.abort();
+  await f.promise;
+});
+test("PPS commands are strict and scoped to host/inviter; round cleanup and native replay save", async () => {
+  const f = fixture();
+  await until(() => f.room.self.bracket === "player");
+  let tick: any;
+  f.client.emit("client.game.round.start", [
+    (fn: any) => (tick = fn),
+    engine(),
+  ]);
+  await until(() => f.calls.wrappers.length === 1);
+  await pause();
+  const chat = (id: string, text: string) =>
+    f.client.emit("room.chat", {
+      system: false,
+      user: { _id: id },
+      content: text,
+    });
+  chat("stranger", "!pps 5");
+  chat("human", "!pps 10");
+  chat("human", "!pps 4bad");
+  assert.equal(f.calls.wrappers[0].config.pps, 2);
+  chat("human", "!pps 5");
+  await until(() => f.calls.wrappers[0].config.pps === 5);
+  assert.equal((await tick({ engine: engine(), events: [] })).keys.length, 1);
+  f.room.replay = { export: () => ({ version: 1, replay: { rounds: [[]] } }) };
+  f.client.emit("game.ready", {
+    isNew: true,
+    players: [
+      { userid: "bot", gameid: 1 },
+      { userid: "human", gameid: 2 },
+    ],
+  });
+  assert.deepEqual(f.calls.scopes, [2]);
+  f.client.emit("client.game.over", { reason: "finish" });
+  assert.equal(f.calls.saved.length, 0);
+  assert.equal(f.calls.wrappers[0].stops, 1);
+  f.client.emit("client.game.end", {});
+  await until(() => f.calls.saved.length === 1);
+  assert.equal(f.calls.saved[0].partial, false);
+  f.shutdown.abort();
+  await f.promise;
+  assert.equal(f.calls.saved.length, 1);
+});
+test("room leave before join settles cannot strand a worker slot", async () => {
+  const client: any = new EventEmitter();
+  client.destroy = async () => {};
+  client.rooms = {
+    join: async () => {
+      client.emit("room.leave");
+      return {};
+    },
+  };
+  await runRoomWorker("test", "human", {
+    adapterPath: "unused",
+    defaultPps: 2,
+    idleMs: 100,
+    signal: new AbortController().signal,
+    replays: { limits: { maxFileBytes: 1000 }, save: async () => "" } as any,
+    createClient: async () => client,
+  });
+});
+
+test("late initialization and search failures cannot stop the next round", async () => {
+  for (const stage of ["init", "tick"]) {
+    let reject!: (error: Error) => void;
+    const wrappers: any[] = [];
+    const f = fixture(true, REQUIRED_SETTINGS, {
+      createWrapper: () => {
+        const pending = new Promise((_resolve, r) => (reject = r));
+        // Second round succeeds; the first fails only after it has been replaced.
+        const w: any = {
+          config: { pps: 2 },
+          stop() {},
+          init: () =>
+            wrappers.length === 1 && stage === "init"
+              ? pending
+              : Promise.resolve(),
+          tick: () => pending,
+        };
+        wrappers.push(w);
+        return w;
+      },
+    });
+    await until(() => f.room.self.bracket === "player");
+    let tick: any;
+    f.client.emit("client.game.round.start", [
+      (fn: any) => (tick = fn),
+      engine(),
+    ]);
+    await pause();
+    const rejectOld = reject;
+    const pendingTick =
+      stage === "tick"
+        ? tick({ engine: engine(), events: [] })
+        : Promise.resolve();
+    f.client.emit("client.game.round.start", [() => {}, engine()]);
+    await pause();
+    rejectOld(new Error("old round failed"));
+    await pendingTick;
+    await pause();
+    assert.equal(f.room.self.bracket, "player");
+    assert.equal(wrappers.length, 2);
+    f.shutdown.abort();
+    await f.promise;
+  }
+});
+test("spawn errors before adapter info are contained and idle lobbies are reclaimed", async () => {
+  let adapter: any;
+  const f = fixture(true, REQUIRED_SETTINGS, {
+    idleMs: 20,
+    createAdapter: () => (adapter = { stop() {} }),
+    createWrapper: () => ({
+      config: { pps: 2 },
+      stop() {},
+      init: async () => {
+        const child: any = new EventEmitter();
+        child.stdin = new EventEmitter();
+        adapter.process = child;
+        child.emit("error", new Error("spawn failed"));
+        throw new Error("no info");
+      },
+    }),
+  });
+  await until(() => f.room.self.bracket === "player");
+  f.client.emit("client.game.round.start", [() => {}, engine()]);
+  await until(() => f.room.self.bracket === "spectator");
+  await f.promise;
+  assert.ok(f.client.destroyed);
+});

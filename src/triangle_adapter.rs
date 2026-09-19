@@ -181,6 +181,8 @@ fn main() {
         MetaPolicyNetwork::default()
     };
     let lookahead_depth: usize = 6;
+    let verbose_moves = std::env::var("BOT_LOG_MOVES").is_ok_and(|value| value == "1");
+    let mut configured = false;
     let mut last_state: Option<Value> = None;
 
     // Main message loop
@@ -207,6 +209,19 @@ fn main() {
 
         match msg_type {
             "config" => {
+                if msg["kicks"].as_str() != Some("SRS-X")
+                    || msg["boardWidth"].as_u64() != Some(4)
+                    || msg["comboTable"]
+                        .as_str()
+                        .is_some_and(|v| v != "multiplier")
+                    || msg["spins"]
+                        .as_str()
+                        .is_some_and(|v| !["all", "all-mini+", "T-spins"].contains(&v))
+                {
+                    eprintln!("[4wide-bot] Unsupported configuration: requires SRS-X, width 4, multiplier combo and supported spins.");
+                    std::process::exit(2);
+                }
+                configured = true;
                 spin_mode = match msg["spins"].as_str().unwrap_or("all") {
                     "all-mini+" => SpinMode::AllMiniPlus,
                     "T-spins" => SpinMode::TSpins,
@@ -238,9 +253,15 @@ fn main() {
             }
             "pieces" => {
                 // New pieces added to queue - handled via state updates
-                eprintln!("[4wide-bot] Pieces received");
+                if verbose_moves {
+                    eprintln!("[4wide-bot] Pieces received");
+                }
             }
             "play" => {
+                if !configured {
+                    eprintln!("[4wide-bot] Refusing play before a supported configuration.");
+                    std::process::exit(2);
+                }
                 // Time to make a move!
                 if let Some(ref state_msg) = last_state {
                     let mut game_state = build_state_from_protocol(state_msg, board_width);
@@ -277,7 +298,7 @@ fn main() {
                         })
                     };
                     let selected = result.and_then(|plan| executable(plan.choice.0, plan.choice.1));
-                    if let Some(plan) = result {
+                    if let Some(plan) = result.filter(|_| verbose_moves) {
                         eprintln!(
                             "[4wide-bot] {} (incoming {}, preview attack {}, peak {})",
                             plan.mode.label(),
@@ -310,20 +331,22 @@ fn main() {
                         .unwrap_or_else(|| (vec!["hardDrop".to_string()], None, false));
                     let path_duration = path_start.elapsed();
 
-                    // Print evaluation plan to stderr for debugging
-                    eprintln!(
+                    if verbose_moves {
+                        // Print evaluation plan to stderr for debugging
+                        eprintln!(
                         "[4wide-bot-AI] Planning for Current Piece: {:?}, Hold: {:?}, Next Queue: {:?}",
                         game_state.current,
                         game_state.hold,
                         &game_state.queue[..game_state.queue.len().min(5)]
                     );
-                    if let Some(m) = best_move {
-                        eprintln!(
+                        if let Some(m) = best_move {
+                            eprintln!(
                             "  -> Best Placement: Piece={:?}, Rotation={:?}, Placement X={}, Use Hold={} => Sending Keys: {:?} (search: {:?}, pathfind: {:?})",
                             m.piece, m.rotation, m.x, use_hold, keys, search_duration, path_duration
                         );
-                    } else {
-                        eprintln!("  -> No valid placement found! Falling back to instant hardDrop. (search: {:?})", search_duration);
+                        } else {
+                            eprintln!("  -> No valid placement found! Falling back to instant hardDrop. (search: {:?})", search_duration);
+                        }
                     }
 
                     send_message(&json!({

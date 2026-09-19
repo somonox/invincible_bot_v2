@@ -51,3 +51,26 @@ fn online_play_uses_queue_defense_and_refreshes_back_to_pc() {
         assert_eq!(m["keys"].as_array().unwrap().last().unwrap(), "hardDrop");
     }
 }
+
+#[test]
+fn adapter_refuses_non_srs_x_configurations() {
+    for kicks in ["SRS", "SRS+", "unknown"] {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_triangle-adapter"))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        writeln!(
+            child.stdin.take().unwrap(),
+            "{}",
+            json!({"type":"config","boardWidth":4,"kicks":kicks})
+        )
+        .unwrap();
+        let result = child.wait_with_output().unwrap();
+        assert!(!result.status.success());
+        assert!(!String::from_utf8(result.stdout)
+            .unwrap()
+            .contains("hardDrop"));
+    }
+}

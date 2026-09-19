@@ -1,86 +1,60 @@
 import { Client } from "@haelp/teto";
-import { BotWrapper, adapters } from "@haelp/teto/utils";
+import { BotWrapper } from "@haelp/teto/utils";
 import path from "path";
 import { existsSync } from "node:fs";
-import { garbageContext } from "./garbage-context";
+import { availableParallelism } from "node:os";
+import { RoomPool, envInt } from "./service-policy";
+import { SearchLimiter } from "./search-limiter";
+import { ReplayStore } from "./replay-store";
+import { installBotRuntime } from "./bot-runtime";
+import { runRoomWorker } from "./room-worker";
 
-// Monkey-patch BotWrapper.frames to space out consecutive movements/rotations with frame gaps
-(BotWrapper as any).frames = (engine: any, keys: string[]) => {
-  const round = (r: number) => Math.round(r * 10) / 10;
-  let running = engine.frame + engine.subframe;
-  return keys.flatMap((key) => {
-    const mappedKey = key === "dasLeft" ? "moveLeft" : key === "dasRight" ? "moveRight" : key;
-    const firstFrame = {
-      type: "keydown",
-      frame: Math.floor(running),
-      data: {
-        key: mappedKey,
-        subframe: round(running - Math.floor(running)),
-      },
-    };
-    running = round(running + 1.0); // 1 frame duration
-    const secondFrame = {
-      type: "keyup",
-      frame: Math.floor(running),
-      data: {
-        key: mappedKey,
-        subframe: round(running - Math.floor(running)),
-      },
-    };
-    running = round(running + 1.0); // 1 frame gap before the next key
-    return [firstFrame, secondFrame];
-  });
-};
-
-// Monkey-patch BotWrapper.prototype.tick to prevent planning for the same piece multiple times before it locks
-BotWrapper.prototype.tick = async function (this: any, engine: any, events: any, data?: any) {
-  const fullData = {
-    state: undefined,
-    play: undefined,
-    ...data
-  };
-  if (events.find((event: any) => event.type === "garbage")) {
-    this.adapter.update(engine, fullData.state);
-  }
-
-  if (this.lastPieces === undefined) {
-    this.lastPieces = engine.stats.pieces;
-  }
-
-  if (engine.frame >= this.nextFrame) {
-    if (this.needsNewMove) {
-      if (engine.stats.pieces > this.lastPieces) {
-        this.nextFrame = BotWrapper.nextFrame(engine, this.config.pps);
-        this.needsNewMove = false;
-      }
-    } else {
-      // Always refresh immediately before planning, including packets arriving
-      // while waiting for the PPS timer or for the previous piece to lock.
-      this.adapter.update(engine, {
-        ...fullData.state,
-        garbageContext: garbageContext(engine, this.config.pps, this.lastInputFrames),
-      });
-      const { keys } = await this.adapter.play(engine, fullData.play);
-      this.lastInputFrames = keys.length * 2;
-      const frames = BotWrapper.frames(engine, keys);
-      this.needsNewMove = true;
-      this.lastPieces = engine.stats.pieces;
-      return frames;
-    }
-  }
-
-  return [];
-};
-
+const maxWorkers = envInt(process.env, "BOT_MAX_WORKERS", 20, 1, 32);
+const pool = new RoomPool(maxWorkers);
+const idleMs = envInt(process.env, "BOT_IDLE_MINUTES", 15, 1, 120) * 60000;
+const searchLimiter = new SearchLimiter(
+  Math.max(1, Math.min(3, availableParallelism() - 1)),
+  maxWorkers,
+);
+installBotRuntime(BotWrapper, searchLimiter);
+const replays = new ReplayStore(
+  path.resolve((import.meta as any).dir, "../replays"),
+  {
+    maxFiles: envInt(process.env, "BOT_REPLAY_MAX_FILES", 1000, 1, 10000),
+    maxBytes:
+      envInt(process.env, "BOT_REPLAY_MAX_MB", 2048, 1, 16384) * 1024 * 1024,
+    maxAgeMs: envInt(process.env, "BOT_REPLAY_DAYS", 14, 1, 365) * 86400000,
+    maxFileBytes:
+      envInt(process.env, "BOT_REPLAY_FILE_MB", 32, 1, 128) * 1024 * 1024,
+  },
+);
+await replays.maintain();
+const maintenance = setInterval(() => {
+  void replays
+    .maintain()
+    .catch((error) => console.error("Replay cleanup:", error.message));
+}, 3600000);
+maintenance.unref();
+const shutdown = new AbortController();
+const workers = new Set<Promise<void>>();
 
 const adapterPath = process.env.BOT_ADAPTER_PATH
   ? path.resolve(process.env.BOT_ADAPTER_PATH)
-  : path.join((import.meta as any).dir, "../target/release/triangle-adapter" + (process.platform === "win32" ? ".exe" : ""));
+  : path.join(
+      (import.meta as any).dir,
+      "../target/release/triangle-adapter" +
+        (process.platform === "win32" ? ".exe" : ""),
+    );
 for (const name of ["BOT_USERNAME", "BOT_PASSWORD"]) {
-  if (!process.env[name]) throw new Error(`Missing ${name}. Set it in tetrio-bot/.env or the service environment.`);
+  if (!process.env[name])
+    throw new Error(
+      `Missing ${name}. Set it in tetrio-bot/.env or the service environment.`,
+    );
 }
 if (!existsSync(adapterPath)) {
-  throw new Error(`Adapter binary not found: ${adapterPath}. Run ./up.sh build first.`);
+  throw new Error(
+    `Adapter binary not found: ${adapterPath}. Run ./up.sh build first.`,
+  );
 }
 
 const masterClient = await Client.create({
@@ -88,224 +62,87 @@ const masterClient = await Client.create({
   password: process.env.BOT_PASSWORD!,
 });
 
-console.log(`[4wide-bot] Master client logged in as: ${masterClient.user.username} (ID: ${masterClient.user.id})`);
-console.log("[4wide-bot] Master client waiting for room invites...");
+console.log(
+  `[4wide-bot] Master client logged in as: ${masterClient.user.username} (ID: ${masterClient.user.id})`,
+);
+console.log(
+  `[4wide-bot] Waiting for invites: ${maxWorkers} rooms, ${searchLimiter.limit} concurrent searches, PPS cap 5.`,
+);
 masterClient.social.status("online", "menus");
 
 // Friend back anyone who friends the bot
-(masterClient as any).on("client.friended", async (friend: { id: string; name: string }) => {
-  console.log(`[4wide-bot] Received friend request event for ${friend.name} (${friend.id})`);
-  
-  // Verify if they are already in friends list to avoid redundant API calls
-  const isAlreadyFriend = masterClient.social.friends.some(f => f.id === friend.id);
-  if (isAlreadyFriend) {
-    console.log(`[4wide-bot] ${friend.name} is already in the friends list. Skipping friend back.`);
-    return;
-  }
+(masterClient as any).on(
+  "client.friended",
+  async (friend: { id: string; name: string }) => {
+    console.log(
+      `[4wide-bot] Received friend request event for ${friend.name} (${friend.id})`,
+    );
 
-  console.log(`[4wide-bot] Attempting to friend back ${friend.name}...`);
-  try {
-    const result = await masterClient.social.friend(friend.id);
-    console.log(`[4wide-bot] Friend back result for ${friend.name}: ${result}`);
-  } catch (err: any) {
-    console.error(`[4wide-bot] Error friending back ${friend.name}:`, err.message || err);
-    if (err.stack) {
-      console.error(err.stack);
+    // Verify if they are already in friends list to avoid redundant API calls
+    const isAlreadyFriend = masterClient.social.friends.some(
+      (f) => f.id === friend.id,
+    );
+    if (isAlreadyFriend) {
+      console.log(
+        `[4wide-bot] ${friend.name} is already in the friends list. Skipping friend back.`,
+      );
+      return;
     }
-  }
-});
 
+    console.log(`[4wide-bot] Attempting to friend back ${friend.name}...`);
+    try {
+      const result = await masterClient.social.friend(friend.id);
+      console.log(
+        `[4wide-bot] Friend back result for ${friend.name}: ${result}`,
+      );
+    } catch (err: any) {
+      console.error(
+        `[4wide-bot] Error friending back ${friend.name}:`,
+        err.message || err,
+      );
+      if (err.stack) {
+        console.error(err.stack);
+      }
+    }
+  },
+);
 
-const MAX_WORKERS = 10;
-let activeWorkersCount = 0;
-let defaultPps = 2.0;
-
-masterClient.on("social.invite", async (invite) => {
-  const roomid = invite.roomid;
-  const sender = invite.sender;
-
-  if (activeWorkersCount >= MAX_WORKERS) {
-    console.log(`[4wide-bot] Received invite to room ${roomid} from ${sender}, but worker pool is full (${activeWorkersCount}/${MAX_WORKERS}). Rejecting.`);
-    await masterClient.social.dm(sender, `Sorry, all bot worker slots are currently full (${MAX_WORKERS}/${MAX_WORKERS}). Please try again later!`).catch((err) => {
-      console.error("[4wide-bot] Failed to send DM to sender:", err);
-    });
+masterClient.on("social.invite", (invite) => {
+  if (stopping) return;
+  const roomid = invite.roomid.trim().toLowerCase();
+  const token = pool.reserve(roomid, invite.sender);
+  if (!token) {
+    console.log(
+      `[4wide-bot] Invite skipped: duplicate room, user limit or full pool (${pool.size}/${maxWorkers}).`,
+    );
     return;
   }
-
-  activeWorkersCount++;
-  console.log(`[4wide-bot] [Worker Assigned] Joining room ${roomid}. Active workers: ${activeWorkersCount}/${MAX_WORKERS}`);
-
-  runWorkerForRoom(roomid).finally(() => {
-    activeWorkersCount--;
-    console.log(`[4wide-bot] [Worker Released] Left room ${roomid}. Active workers: ${activeWorkersCount}/${MAX_WORKERS}`);
+  const worker = runRoomWorker(roomid, invite.sender, {
+    adapterPath,
+    defaultPps: 2,
+    idleMs,
+    replays,
+    signal: shutdown.signal,
+  }).finally(() => {
+    pool.release(roomid, token);
+    workers.delete(worker);
   });
+  workers.add(worker);
+  console.log(`[4wide-bot] Room assigned (${pool.size}/${maxWorkers}).`);
 });
-
-async function runWorkerForRoom(roomid: string) {
-  let client: Client | null = null;
-  let wrapper: any = null;
-  let roomPps = defaultPps;
-
-  try {
-    // 1. Create a new client connection for this room worker
-    client = await Client.create({
-      username: process.env.BOT_USERNAME!,
-      password: process.env.BOT_PASSWORD!,
-    });
-
-    client.social.status("online", "lobby:X-PRIV");
-
-    // 2. Join the room
-    const room = await client.rooms.join(roomid);
-    console.log(`[Worker-${roomid}] Joined room: ${room.name} (${room.id})`);
-    client.social.status("online", "lobby:X-PRIV");
-
-    const checkRoomConfigAndBracket = async () => {
-      if (!client || !client.room) return;
-      const currentRoom = client.room;
-      const boardWidth = currentRoom.options?.boardwidth;
-      const is4Wide = boardWidth === 4;
-      const selfPlayer = currentRoom.players.find((p) => p._id === client!.user.id);
-      const currentBracket = selfPlayer?.bracket;
-
-      if (is4Wide) {
-        if (currentBracket !== "player") {
-          console.log(`[Worker-${roomid}] Room is 4-wide. Switching to player bracket.`);
-          await currentRoom.switch("player").catch((err) => {
-            console.error(`[Worker-${roomid}] Failed to switch to player bracket:`, err);
-          });
-        }
-      } else {
-        if (currentBracket !== "spectator") {
-          console.log(`[Worker-${roomid}] Room board width is ${boardWidth || 4} (not 4-wide). Switching to spectator bracket.`);
-          await currentRoom.switch("spectator").catch((err) => {
-            console.error(`[Worker-${roomid}] Failed to switch to spectator bracket:`, err);
-          });
-          await currentRoom.chat("This bot only plays in 4-wide rooms. Spectating until room is set to 4-wide.").catch(() => {});
-        }
-      }
-    };
-
-    const checkRoomEmptyAndLeave = async () => {
-      if (!client || !client.room) return;
-      const otherPlayers = client.room.players.filter((p) => p._id !== client!.user.id);
-      if (otherPlayers.length === 0) {
-        console.log(`[Worker-${roomid}] No other players left in the room. Leaving room...`);
-        await client.room.leave().catch((err) => {
-          console.error(`[Worker-${roomid}] Failed to leave room:`, err);
-        });
-      }
-    };
-
-    // Check config immediately upon joining
-    await checkRoomConfigAndBracket();
-    await checkRoomEmptyAndLeave();
-
-    const onRoomUpdate = async () => {
-      await checkRoomConfigAndBracket();
-      await checkRoomEmptyAndLeave();
-    };
-
-    const onRoomUpdateBracket = async (data: { uid: string }) => {
-      if (client && data.uid === client.user.id) {
-        await checkRoomConfigAndBracket();
-      }
-    };
-
-    client.on("room.update", onRoomUpdate);
-    client.on("room.update.bracket", onRoomUpdateBracket);
-    client.on("room.player.remove", () => {
-      setTimeout(checkRoomEmptyAndLeave, 0);
-    });
-
-    // Listen to room chat for command handling
-    client.on("room.chat", async (chat) => {
-      if (chat.system) return;
-      if (!client || chat.user._id === client.user.id) return;
-
-      const content = chat.content.trim();
-      if (content.toLowerCase().startsWith("!pps")) {
-        const parts = content.split(/\s+/);
-        if (parts.length >= 2) {
-          const ppsVal = parseFloat(parts[1]);
-          if (!isNaN(ppsVal) && ppsVal >= 0.1 && ppsVal <= 10.0) {
-            roomPps = ppsVal;
-            if (wrapper) {
-              wrapper.config.pps = ppsVal;
-            }
-            await client.room?.chat(`PPS updated to ${ppsVal}`).catch((err) => {
-              console.error(`[Worker-${roomid}] Failed to send chat message:`, err);
-            });
-            console.log(`[Worker-${roomid}] PPS updated to ${ppsVal} by ${chat.user.username}`);
-          } else {
-            await client.room?.chat("Invalid PPS value. Please enter a number between 0.1 and 10.0.").catch(() => {});
-          }
-        } else {
-          await client.room?.chat(`Current PPS is ${roomPps}`).catch(() => {});
-        }
-      }
-    });
-
-    // Persistent round start listener
-    client.on("client.game.round.start", async ([tick, engine]) => {
-      if (!client || client.room?.self?.bracket !== "player") {
-        console.log(`[Worker-${roomid}] Game started, but bot is in spectator bracket. Ignoring.`);
-        return;
-      }
-      console.log(`[Worker-${roomid}] Round started!`);
-      client.social.status("online", "lobby_ig:X-PRIV");
-
-      const adapter = new adapters.IO({
-        path: adapterPath,
-        verbose: false,
-      });
-
-      wrapper = new BotWrapper(adapter, {
-        pps: roomPps,
-      });
-
-      const initPromise = wrapper.init(engine);
-
-      let isReady = false;
-      initPromise.then(() => {
-        isReady = true;
-      });
-
-      tick(async ({ engine, events }) => {
-        if (!isReady || !wrapper) {
-          return { keys: [] };
-        }
-        adapter.update(engine);
-        return {
-          keys: await wrapper.tick(engine, events),
-        };
-      });
-
-      await client.wait("client.game.over");
-      console.log(`[Worker-${roomid}] Round over.`);
-      if (client) {
-        client.social.status("online", "lobby:X-PRIV");
-      }
-      if (wrapper) {
-        wrapper.stop();
-        wrapper = null;
-      }
-    });
-
-    // Wait until the bot leaves the room (or gets kicked)
-    await client.wait("room.leave");
-    console.log(`[Worker-${roomid}] Left room.`);
-
-  } catch (err) {
-    console.error(`[Worker-${roomid}] Error in room lifecycle:`, err);
-  } finally {
-    if (wrapper) {
-      try {
-        wrapper.stop();
-      } catch {}
-    }
-    if (client) {
-      await client.destroy().catch(() => {});
-    }
-  }
-}
+let stopping = false;
+const stop = async () => {
+  if (stopping) return;
+  stopping = true;
+  clearInterval(maintenance);
+  shutdown.abort();
+  await Promise.allSettled([...workers]);
+  await replays.maintain().catch(() => {});
+  await masterClient.destroy().catch(() => {});
+};
+process.once("SIGTERM", () => {
+  void stop();
+});
+process.once("SIGINT", () => {
+  void stop();
+});

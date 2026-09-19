@@ -36,3 +36,6 @@ fusion_temp/
 
 # Local daemon PID / control lock
 .run/
+
+# Locally retained TETR.IO match replays
+/replays/
