@@ -25,6 +25,7 @@ fn main() {
     let mut total_breaks = 0usize;
     let mut total_attack = 0u32;
     let mut largest_hit = 0u32;
+    let mut choice_hash = 0xcbf29ce484222325u64;
     for seed in 0..games {
         let mut rng = StdRng::seed_from_u64(seed as u64 + 20260916);
         let mut stream = Vec::new();
@@ -94,6 +95,16 @@ fn main() {
             };
             times.push(start.elapsed().as_secs_f64() * 1000.0);
             let Some((m, use_hold)) = choice else { break };
+            for value in [
+                m.piece as u64,
+                m.rotation as u64,
+                m.x as u64,
+                m.y as u64,
+                m.spin as u64,
+                use_hold as u64,
+            ] {
+                choice_hash = (choice_hash ^ value).wrapping_mul(0x100000001b3);
+            }
             if use_hold {
                 if hold.is_none() {
                     index += 1;
@@ -140,7 +151,7 @@ fn main() {
         serde_json::to_string_pretty(&json!({
             "games": records, "depth": depth, "decisions":decisions,"opponent_combo":opponent_combo, "searches": n, "objective": mode, "perfect_clears": total_pcs,
             "clear_moves": total_clears, "combo_breaks": total_breaks,
-            "attack":total_attack, "largest_hit":largest_hit,
+            "attack":total_attack, "largest_hit":largest_hit, "choice_hash": format!("{choice_hash:016x}"),
             "p50_ms": times[n / 2], "p95_ms": times[(n * 95 / 100).min(n - 1)],
             "mean_ms": times.iter().sum::<f64>() / n as f64,
         }))

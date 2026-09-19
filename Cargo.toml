@@ -19,6 +19,8 @@ required-features = ["gui"]
 
 [features]
 default = ["gui"]
+# Optional ARM64 integer SIMD; other targets retain the scalar reference.
+arm-neon = []
 gui = ["dep:eframe", "dep:egui", "dep:egui_plot"]
 
 [dependencies]

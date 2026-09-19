@@ -35,7 +35,7 @@ impl Default for Weights {
             well_depth: -0.3,
             four_wide_well: 2.5,
             combo_reward: 1.5,
-            
+
             // Opponent weights
             opp_height_max: 0.2,
             opp_holes: 0.3,
@@ -119,7 +119,7 @@ pub struct Features {
     pub well_depth: f32,
     pub four_wide_well: f32,
     pub combo_reward: f32,
-    
+
     // Opponent / Multiplayer features
     pub opp_height_max: f32,
     pub opp_holes: f32,
@@ -131,7 +131,8 @@ pub struct Features {
 impl Features {
     pub fn evaluate_state(state: &GameState, opponent: Option<&GameState>) -> Self {
         let board = &state.board;
-        let heights = board.column_heights();
+        let height_storage = board.column_heights_array();
+        let heights = &height_storage[..board.width];
         let max_h = heights.iter().copied().max().unwrap_or(0);
         let avg_h = if board.width > 0 {
             heights.iter().sum::<usize>() as f32 / board.width as f32
@@ -151,41 +152,23 @@ impl Features {
             }
         }
 
-        // Row Transitions (horizontal state changes)
-        let mut row_transitions = 0.0;
-        let check_limit_y = (max_h + 2).min(BOARD_HEIGHT);
-        for y in 0..check_limit_y {
-            let mut prev_cell = true; // Board boundary is considered filled
-            for x in 0..board.width {
-                let cell = (board.rows[y] & (1 << x)) != 0;
-                if cell != prev_cell {
-                    row_transitions += 1.0;
-                }
-                prev_cell = cell;
-            }
-            if !prev_cell {
-                row_transitions += 1.0; // Transition to right wall
-            }
-        }
-
-        // Column Transitions (vertical state changes)
-        let mut col_transitions = 0.0;
-        for x in 0..board.width {
-            let mut prev_cell = false; // Below floor is considered filled
-            for y in 0..BOARD_HEIGHT {
-                let cell = (board.rows[y] & (1 << x)) != 0;
-                if cell != prev_cell {
-                    col_transitions += 1.0;
-                }
-                prev_cell = cell;
-            }
-        }
+        let (row_transitions, col_transitions) = board.transitions((max_h + 2).min(BOARD_HEIGHT));
+        let row_transitions = row_transitions as f32;
+        let col_transitions = col_transitions as f32;
 
         // Well Depths
         let mut well_depth = 0.0;
         for x in 0..board.width {
-            let left_h = if x > 0 { heights[x - 1] as i32 } else { BOARD_HEIGHT as i32 };
-            let right_h = if x < board.width - 1 { heights[x + 1] as i32 } else { BOARD_HEIGHT as i32 };
+            let left_h = if x > 0 {
+                heights[x - 1] as i32
+            } else {
+                BOARD_HEIGHT as i32
+            };
+            let right_h = if x < board.width - 1 {
+                heights[x + 1] as i32
+            } else {
+                BOARD_HEIGHT as i32
+            };
             let own_h = heights[x] as i32;
             let surrounding_min = left_h.min(right_h);
             if surrounding_min > own_h {
@@ -196,9 +179,15 @@ impl Features {
         // Four-wide Well Score (for 10-column mode)
         let four_wide_well = if board.width == 10 {
             let left_well_avg = (heights[0] + heights[1] + heights[2] + heights[3]) as f32 / 4.0;
-            let left_rest_avg = (heights[4] + heights[5] + heights[6] + heights[7] + heights[8] + heights[9]) as f32 / 6.0;
+            let left_rest_avg =
+                (heights[4] + heights[5] + heights[6] + heights[7] + heights[8] + heights[9])
+                    as f32
+                    / 6.0;
             let right_well_avg = (heights[6] + heights[7] + heights[8] + heights[9]) as f32 / 4.0;
-            let right_rest_avg = (heights[0] + heights[1] + heights[2] + heights[3] + heights[4] + heights[5]) as f32 / 6.0;
+            let right_rest_avg =
+                (heights[0] + heights[1] + heights[2] + heights[3] + heights[4] + heights[5])
+                    as f32
+                    / 6.0;
 
             let left_diff = left_rest_avg - left_well_avg;
             let right_diff = right_rest_avg - right_well_avg;

@@ -1,5 +1,7 @@
 """Linux process-control regression: fake tools, no network or real credentials."""
 import fcntl
+import json
+import platform
 import os
 from pathlib import Path
 import shutil
@@ -30,8 +32,9 @@ else:
     while True: time.sleep(1)
 """)
     cargo.write_text(r"""#!/usr/bin/python3
-import sys
+import sys,os,json
 from pathlib import Path
+Path("build-options.json").write_text(json.dumps({"args":sys.argv,"flags":os.environ.get("RUSTFLAGS",""),"lto":os.environ.get("CARGO_PROFILE_RELEASE_LTO"),"units":os.environ.get("CARGO_PROFILE_RELEASE_CODEGEN_UNITS")}))
 assert '--locked' in sys.argv and '--no-default-features' in sys.argv
 assert sys.argv[-1]=='triangle-adapter'
 p=Path('../target/release/triangle-adapter');p.parent.mkdir(parents=True,exist_ok=True)
@@ -49,6 +52,15 @@ p.write_text('#!/bin/sh\nexit 0\n');p.chmod(0o755)
         run("help")
         run("invalid", False)
         run("status", False)
+        run("build")
+        if platform.machine() == "aarch64":
+            options=json.loads((root / "tetrio-bot/build-options.json").read_text())
+            assert "target-cpu=native" in options["flags"]
+            assert options["lto"] == "thin" and options["units"] == "1"
+            assert "arm-neon" not in options["args"]
+            run("build", extra={"BOT_TARGET_CPU":"neoverse-n1", "BOT_ARM_NEON":"1"})
+            options=json.loads((root / "tetrio-bot/build-options.json").read_text())
+            assert "target-cpu=neoverse-n1" in options["flags"] and "arm-neon" in options["args"]
         run("up")
         first = pid_file.read_text()
         run("start")

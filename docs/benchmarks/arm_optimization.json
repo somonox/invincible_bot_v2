@@ -1,0 +1,202 @@
+{
+  "cpu": "Neoverse-N1",
+  "depth": 6,
+  "residue_decisions_per_run": 320,
+  "all_choices_and_results_identical": true,
+  "summary": {
+    "baseline": {
+      "mean_ms_median": 15.027866668749983,
+      "p95_ms_median": 17.009056
+    },
+    "optimized": {
+      "mean_ms_median": 8.407245909374998,
+      "p95_ms_median": 10.136073000000001
+    },
+    "n1": {
+      "mean_ms_median": 8.058091090624997,
+      "p95_ms_median": 9.792752
+    },
+    "neon": {
+      "mean_ms_median": 8.033396081249993,
+      "p95_ms_median": 9.687111999999999
+    }
+  },
+  "runs": {
+    "baseline": [
+      {
+        "mode": "hybrid-residue",
+        "repeat": 0,
+        "mean_ms": 15.032084584375005,
+        "p95_ms": 17.009056,
+        "choice_hash": "96117cd28dbc11b1"
+      },
+      {
+        "mode": "hybrid-residue",
+        "repeat": 1,
+        "mean_ms": 14.721499628125011,
+        "p95_ms": 16.962456,
+        "choice_hash": "96117cd28dbc11b1"
+      },
+      {
+        "mode": "hybrid-residue",
+        "repeat": 2,
+        "mean_ms": 15.027866668749983,
+        "p95_ms": 17.094536,
+        "choice_hash": "96117cd28dbc11b1"
+      },
+      {
+        "mode": "hybrid",
+        "repeat": 0,
+        "mean_ms": 14.799439500000002,
+        "p95_ms": 16.640814,
+        "choice_hash": "92f3f43627355f2b"
+      },
+      {
+        "mode": "combo-residue",
+        "repeat": 0,
+        "mean_ms": 14.735783749999992,
+        "p95_ms": 17.208496,
+        "choice_hash": "1aa5a7248a030cd1"
+      },
+      {
+        "mode": "pc",
+        "repeat": 0,
+        "mean_ms": 3.543089100000001,
+        "p95_ms": 11.368437,
+        "choice_hash": "c609cb55d6cab22c"
+      }
+    ],
+    "optimized": [
+      {
+        "mode": "hybrid-residue",
+        "repeat": 0,
+        "mean_ms": 8.279142659375005,
+        "p95_ms": 9.967553,
+        "choice_hash": "96117cd28dbc11b1"
+      },
+      {
+        "mode": "hybrid-residue",
+        "repeat": 1,
+        "mean_ms": 8.407245909374998,
+        "p95_ms": 10.280114,
+        "choice_hash": "96117cd28dbc11b1"
+      },
+      {
+        "mode": "hybrid-residue",
+        "repeat": 2,
+        "mean_ms": 8.42127735312501,
+        "p95_ms": 10.136073000000001,
+        "choice_hash": "96117cd28dbc11b1"
+      },
+      {
+        "mode": "hybrid",
+        "repeat": 0,
+        "mean_ms": 8.496938350000002,
+        "p95_ms": 10.408594,
+        "choice_hash": "92f3f43627355f2b"
+      },
+      {
+        "mode": "combo-residue",
+        "repeat": 0,
+        "mean_ms": 8.856512987499997,
+        "p95_ms": 10.445154,
+        "choice_hash": "1aa5a7248a030cd1"
+      },
+      {
+        "mode": "pc",
+        "repeat": 0,
+        "mean_ms": 2.2173037624999994,
+        "p95_ms": 6.860822,
+        "choice_hash": "c609cb55d6cab22c"
+      }
+    ],
+    "n1": [
+      {
+        "mode": "hybrid-residue",
+        "repeat": 0,
+        "mean_ms": 8.091611656250006,
+        "p95_ms": 9.792752,
+        "choice_hash": "96117cd28dbc11b1"
+      },
+      {
+        "mode": "hybrid-residue",
+        "repeat": 1,
+        "mean_ms": 8.049980603125004,
+        "p95_ms": 9.802672,
+        "choice_hash": "96117cd28dbc11b1"
+      },
+      {
+        "mode": "hybrid-residue",
+        "repeat": 2,
+        "mean_ms": 8.058091090624997,
+        "p95_ms": 9.787072,
+        "choice_hash": "96117cd28dbc11b1"
+      },
+      {
+        "mode": "hybrid",
+        "repeat": 0,
+        "mean_ms": 8.381606975000002,
+        "p95_ms": 10.055473000000001,
+        "choice_hash": "92f3f43627355f2b"
+      },
+      {
+        "mode": "combo-residue",
+        "repeat": 0,
+        "mean_ms": 8.5837786125,
+        "p95_ms": 9.991592,
+        "choice_hash": "1aa5a7248a030cd1"
+      },
+      {
+        "mode": "pc",
+        "repeat": 0,
+        "mean_ms": 2.1192114374999997,
+        "p95_ms": 6.547821,
+        "choice_hash": "c609cb55d6cab22c"
+      }
+    ],
+    "neon": [
+      {
+        "mode": "hybrid-residue",
+        "repeat": 0,
+        "mean_ms": 8.033396081249993,
+        "p95_ms": 9.687111999999999,
+        "choice_hash": "96117cd28dbc11b1"
+      },
+      {
+        "mode": "hybrid-residue",
+        "repeat": 1,
+        "mean_ms": 8.144033649999997,
+        "p95_ms": 9.884072000000002,
+        "choice_hash": "96117cd28dbc11b1"
+      },
+      {
+        "mode": "hybrid-residue",
+        "repeat": 2,
+        "mean_ms": 7.998506009375001,
+        "p95_ms": 9.656071,
+        "choice_hash": "96117cd28dbc11b1"
+      },
+      {
+        "mode": "hybrid",
+        "repeat": 0,
+        "mean_ms": 8.201042362499999,
+        "p95_ms": 9.666792000000001,
+        "choice_hash": "92f3f43627355f2b"
+      },
+      {
+        "mode": "combo-residue",
+        "repeat": 0,
+        "mean_ms": 8.576241087499994,
+        "p95_ms": 10.095073,
+        "choice_hash": "1aa5a7248a030cd1"
+      },
+      {
+        "mode": "pc",
+        "repeat": 0,
+        "mean_ms": 2.1395970125000003,
+        "p95_ms": 6.800382,
+        "choice_hash": "c609cb55d6cab22c"
+      }
+    ]
+  }
+}

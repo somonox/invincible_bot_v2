@@ -1,7 +1,9 @@
 use crate::engine::board::{Board, BOARD_HEIGHT};
 use crate::engine::header::{Move, Piece, Rotation, Spin, SpinMode};
 use crate::engine::piece::{get_piece_cells, get_srs_kicks, get_srs_kicks_i};
+use std::cell::RefCell;
 use std::collections::{HashSet, VecDeque};
+use std::hash::{Hash, Hasher};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct SearchState {
@@ -81,8 +83,9 @@ fn neighbors(
     s: SearchState,
     mode: SpinMode,
     sonic: bool,
-) -> Vec<(SearchState, Spin, &'static str)> {
-    let mut result = Vec::with_capacity(6);
+) -> impl Iterator<Item = (SearchState, Spin, &'static str)> {
+    let mut result = [None; 6];
+    let mut count = 0;
     for (dx, dy, key) in [
         (-1, 0, "moveLeft"),
         (1, 0, "moveRight"),
@@ -99,7 +102,8 @@ fn neighbors(
                     n.y -= 1;
                 }
             }
-            result.push((n, Spin::None, key));
+            result[count] = Some((n, Spin::None, key));
+            count += 1;
         }
     }
     for (to, key) in [
@@ -108,10 +112,11 @@ fn neighbors(
         (s.rotation.rotate_180(), "rotate180"),
     ] {
         if let Some((n, spin)) = rotate(board, piece, s, to, mode) {
-            result.push((n, spin, key));
+            result[count] = Some((n, spin, key));
+            count += 1;
         }
     }
-    result
+    result.into_iter().flatten()
 }
 
 fn spawn(board: &Board, piece: Piece, fast: bool) -> Option<SearchState> {
@@ -146,15 +151,82 @@ fn index(s: SearchState, spin: Spin) -> Option<usize> {
 pub fn generate_moves(board: &Board, piece: Piece) -> Vec<Move> {
     generate_moves_with_rules(board, piece, SpinMode::All)
 }
+const VISITED_COUNT: usize = 3 * 4 * 20 * (BOARD_HEIGHT + 4);
+const CACHE_SIZE: usize = 512;
+struct MoveEntry {
+    board: Board,
+    piece: Piece,
+    mode: SpinMode,
+    moves: Vec<Move>,
+}
+struct MoveWorkspace {
+    visited: Vec<u16>,
+    epoch: u16,
+    queue: Vec<(SearchState, Spin)>,
+    placements: Vec<([i32; 4], Spin)>,
+    cache: Vec<Option<MoveEntry>>,
+}
+impl MoveWorkspace {
+    fn new() -> Self {
+        Self {
+            visited: vec![0; VISITED_COUNT],
+            epoch: 0,
+            queue: Vec::with_capacity(512),
+            placements: Vec::with_capacity(32),
+            cache: (0..CACHE_SIZE).map(|_| None).collect(),
+        }
+    }
+}
+thread_local! { static MOVE_WORKSPACE: RefCell<MoveWorkspace> = RefCell::new(MoveWorkspace::new()); }
+
+/// Bounded per-thread cache. Equality checks guard hash collisions; spin rules,
+/// full rows and width are part of the key. Combo/garbage cannot affect geometry.
 pub fn generate_moves_with_rules(board: &Board, piece: Piece, mode: SpinMode) -> Vec<Move> {
+    MOVE_WORKSPACE.with(|cell| {
+        let mut work = cell.borrow_mut();
+        let mut hash = std::collections::hash_map::DefaultHasher::new();
+        board.rows.hash(&mut hash);
+        board.width.hash(&mut hash);
+        piece.hash(&mut hash);
+        mode.hash(&mut hash);
+        let slot = hash.finish() as usize % CACHE_SIZE;
+        if let Some(entry) = &work.cache[slot] {
+            if entry.board == *board && entry.piece == piece && entry.mode == mode {
+                return entry.moves.clone();
+            }
+        }
+        let moves = generate_uncached(board, piece, mode, &mut work);
+        work.cache[slot] = Some(MoveEntry {
+            board: *board,
+            piece,
+            mode,
+            moves: moves.clone(),
+        });
+        moves
+    })
+}
+fn generate_uncached(
+    board: &Board,
+    piece: Piece,
+    mode: SpinMode,
+    work: &mut MoveWorkspace,
+) -> Vec<Move> {
     let Some(start) = spawn(board, piece, true) else {
         return Vec::new();
     };
-    let mut visited = vec![false; 3 * 4 * 20 * (BOARD_HEIGHT + 4)];
-    let mut queue = Vec::with_capacity(512);
-    let mut placements = Vec::new();
+    work.epoch = work.epoch.wrapping_add(1);
+    if work.epoch == 0 {
+        work.visited.fill(0);
+        work.epoch = 1;
+    }
+    let epoch = work.epoch;
+    let visited = &mut work.visited;
+    let queue = &mut work.queue;
+    let placements = &mut work.placements;
+    queue.clear();
+    placements.clear();
     let mut moves = Vec::with_capacity(32);
-    visited[index(start, Spin::None).unwrap()] = true;
+    visited[index(start, Spin::None).unwrap()] = epoch;
     queue.push((start, Spin::None));
     let mut head = 0;
     while head < queue.len() {
@@ -177,8 +249,8 @@ pub fn generate_moves_with_rules(board: &Board, piece: Piece, mode: SpinMode) ->
         }
         for (n, spin, _) in neighbors(board, piece, s, mode, false) {
             if let Some(i) = index(n, spin) {
-                if !visited[i] {
-                    visited[i] = true;
+                if visited[i] != epoch {
+                    visited[i] = epoch;
                     queue.push((n, spin));
                 }
             }
@@ -208,4 +280,39 @@ pub fn find_input_path(board: &Board, target: Move, mode: SpinMode) -> Option<Ve
         }
     }
     None
+}
+
+#[cfg(test)]
+mod workspace_tests {
+    use super::*;
+    #[test]
+    fn epoch_wrap_does_not_leave_stale_visited_states() {
+        let mut work = MoveWorkspace::new();
+        work.epoch = u16::MAX - 1;
+        let b = Board::new(4);
+        let first = generate_uncached(&b, Piece::T, SpinMode::All, &mut work);
+        assert_eq!(
+            first,
+            generate_uncached(&b, Piece::T, SpinMode::All, &mut work)
+        );
+        assert_eq!(work.epoch, 1);
+    }
+    #[test]
+    fn cache_preserves_move_order_and_all_key_dimensions() {
+        let mut work = MoveWorkspace::new();
+        for width in [4, 10] {
+            for mode in [SpinMode::All, SpinMode::AllMiniPlus, SpinMode::TSpins] {
+                for piece in crate::engine::header::ALL_PIECES {
+                    for rows in [[0, 0, 0], [3, 1, 0], [11, 9, 1]] {
+                        let mut b = Board::new(width);
+                        b.rows[..3].copy_from_slice(&rows);
+                        let expected = generate_uncached(&b, piece, mode, &mut work);
+                        for _ in 0..2 {
+                            assert_eq!(generate_moves_with_rules(&b, piece, mode), expected);
+                        }
+                    }
+                }
+            }
+        }
+    }
 }

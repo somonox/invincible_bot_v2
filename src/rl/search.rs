@@ -162,36 +162,50 @@ impl Key {
 }
 
 fn retain_best(nodes: &mut Vec<Node>, width: usize, objective: Objective) {
-    nodes.sort_by(|a, b| b.compare(a, objective));
-    if !objective.is_attack() || nodes.len() <= width {
-        nodes.truncate(width);
+    if nodes.len() <= width {
+        nodes.sort_by(|a, b| b.compare(a, objective));
         return;
     }
-    // Keep investment routes alive before their damage pays off: half the beam
-    // by damage, a quarter by clear-chain continuation, a quarter by PC shape.
-    // These are search budgets, not gameplay thresholds. Final choice always
-    // uses full-horizon damage/safety, with no speculative attack reward.
+    let budgets = if objective.is_attack() {
+        vec![
+            (objective, width / 2),
+            (Objective::Combo, width / 4),
+            (Objective::PerfectClear, width - width / 2 - width / 4),
+        ]
+    } else {
+        vec![(objective, width)]
+    };
     let mut keep = vec![false; nodes.len()];
-    let mut count = 0;
-    for (ranking, quota) in [
-        (objective, width / 2),
-        (Objective::Combo, width / 4),
-        (Objective::PerfectClear, width - width / 2 - width / 4),
-    ] {
-        let mut indices: Vec<usize> = (0..nodes.len()).filter(|&i| !keep[i]).collect();
-        indices.sort_by(|&a, &b| nodes[b].compare(&nodes[a], ranking));
-        for i in indices.into_iter().take(quota) {
+    let mut indices = Vec::with_capacity(nodes.len());
+    for (ranking, quota) in budgets {
+        if quota == 0 {
+            continue;
+        }
+        indices.clear();
+        indices.extend((0..nodes.len()).filter(|&i| !keep[i]));
+        // Previous stable full sorts broke ties by primary rank, then original
+        // insertion order. Make that order explicit before partial selection.
+        let compare = |&a: &usize, &b: &usize| {
+            nodes[b]
+                .compare(&nodes[a], ranking)
+                .then_with(|| nodes[b].compare(&nodes[a], objective))
+                .then(a.cmp(&b))
+        };
+        if quota < indices.len() {
+            indices.select_nth_unstable_by(quota, compare);
+        }
+        for &i in indices.iter().take(quota) {
             keep[i] = true;
-            count += 1;
         }
     }
-    debug_assert_eq!(count, width);
     let mut index = 0;
     nodes.retain(|_| {
         let retained = keep[index];
         index += 1;
         retained
     });
+    // Sort only the survivors. Stable ties still use original insertion order.
+    nodes.sort_by(|a, b| b.compare(a, objective));
 }
 
 pub fn find_best_move(
@@ -435,4 +449,77 @@ fn search(
         frontier = next_layer;
     }
     fallback
+}
+
+#[cfg(test)]
+mod selection_tests {
+    use super::*;
+    fn reference(nodes: &mut Vec<Node>, width: usize, objective: Objective) {
+        nodes.sort_by(|a, b| b.compare(a, objective));
+        if !objective.is_attack() || nodes.len() <= width {
+            nodes.truncate(width);
+            return;
+        }
+        let mut keep = vec![false; nodes.len()];
+        for (ranking, quota) in [
+            (objective, width / 2),
+            (Objective::Combo, width / 4),
+            (Objective::PerfectClear, width - width / 2 - width / 4),
+        ] {
+            let mut indices: Vec<_> = (0..nodes.len()).filter(|&i| !keep[i]).collect();
+            indices.sort_by(|&a, &b| nodes[b].compare(&nodes[a], ranking));
+            for i in indices.into_iter().take(quota) {
+                keep[i] = true;
+            }
+        }
+        let mut i = 0;
+        nodes.retain(|_| {
+            let k = keep[i];
+            i += 1;
+            k
+        });
+    }
+    #[test]
+    fn partial_selection_preserves_full_stable_sort_including_ties() {
+        let state = GameState::new(4);
+        for all_tied in [false, true] {
+            let nodes: Vec<Node> = (0..256)
+                .map(|i| Node {
+                    state: state.clone(),
+                    first_move: Move::new(Piece::T, crate::engine::header::Rotation::North, i, 0),
+                    use_hold: false,
+                    chain_open: true,
+                    initial_chain: if all_tied { 0 } else { i as usize % 5 },
+                    clears: i as usize % 3,
+                    perfect_clears: 0,
+                    quality: if all_tied { 0.0 } else { (i % 7) as f32 },
+                    attack: if all_tied { 0 } else { i as u32 % 11 },
+                    peak_attack: 0,
+                    received: 0,
+                    exposure: 0,
+                    first_cancel: 0,
+                    pc_depth: None,
+                })
+                .collect();
+            for objective in [
+                Objective::Combo,
+                Objective::PerfectClear,
+                Objective::AttackPc,
+                Objective::AttackCombo,
+                Objective::DefensePc,
+                Objective::DefenseCombo,
+            ] {
+                for width in [0, 1, 2, 7, 64, 256] {
+                    let mut expected = nodes.clone();
+                    let mut actual = nodes.clone();
+                    reference(&mut expected, width, objective);
+                    retain_best(&mut actual, width, objective);
+                    assert_eq!(
+                        actual.iter().map(|n| n.first_move.x).collect::<Vec<_>>(),
+                        expected.iter().map(|n| n.first_move.x).collect::<Vec<_>>()
+                    );
+                }
+            }
+        }
+    }
 }

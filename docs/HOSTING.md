@@ -92,3 +92,16 @@ or a match succeeded. Check the log for the login and waiting-for-invites messag
 - `python3 tests/up_script_smoke.py` on Linux: fake-tool build, duplicate start,
   restart, stop, missing environment, lock contention and stale-PID protection;
   no TETR.IO login or network is used by that test.
+
+## ARM64 optimized build
+
+On an ARM64 host, `./up.sh build` uses `target-cpu=native`, ThinLTO and one
+codegen unit for the Rust adapter. Windows GUI builds keep their existing flags.
+The resulting server binary targets the build host; set `BOT_TARGET_CPU=generic`
+when an ARM binary must run on older ARM CPUs. Existing Cargo LTO/codegen-unit
+environment overrides are respected. `BOT_ARM_NEON=1 ./up.sh build` enables the
+optional manual NEON transition counter; it is off by default because the N1
+end-to-end difference was small. `./up.sh build` does not start a stopped service.
+
+See [ARM measurements](ARM_OPTIMIZATION.md) for the measured speedup, unchanged
+move-sequence checks, limits and reproduction commands.

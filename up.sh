@@ -32,7 +32,18 @@ running() {
 }
 build() {
   need cargo; need bun
-  cargo build --manifest-path "$ROOT/Cargo.toml" --locked --release --no-default-features --bin triangle-adapter
+  (
+    local -a extra=()
+    if [[ $(uname -m) == aarch64 ]]; then
+      # Build on the destination CPU. Overrides allow portable ARM binaries.
+      export RUSTFLAGS="${RUSTFLAGS:-} -C target-cpu=${BOT_TARGET_CPU:-native}"
+      export CARGO_PROFILE_RELEASE_LTO="${CARGO_PROFILE_RELEASE_LTO:-thin}"
+      export CARGO_PROFILE_RELEASE_CODEGEN_UNITS="${CARGO_PROFILE_RELEASE_CODEGEN_UNITS:-1}"
+      # Manual NEON was only ~0.3% faster on N1; retain it as an opt-in.
+      [[ ${BOT_ARM_NEON:-0} != 1 ]] || extra+=(--features arm-neon)
+    fi
+    cargo build --manifest-path "$ROOT/Cargo.toml" --locked --release --no-default-features "${extra[@]}" --bin triangle-adapter
+  )
   bun install --frozen-lockfile
 }
 preflight() {
