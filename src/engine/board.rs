@@ -6,6 +6,8 @@ pub const BOARD_HEIGHT: usize = 40;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Board {
     pub width: usize,
+    /// Visible field height used as the spawn baseline; storage includes headroom.
+    pub spawn_height: i32,
     pub rows: [u16; BOARD_HEIGHT],
 }
 
@@ -14,6 +16,7 @@ impl Board {
         debug_assert!(width <= 16);
         Self {
             width,
+            spawn_height: 20,
             rows: [0; BOARD_HEIGHT],
         }
     }

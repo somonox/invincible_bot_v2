@@ -124,10 +124,10 @@ fn spawn(board: &Board, piece: Piece, fast: bool) -> Option<SearchState> {
     let mut s = SearchState {
         rotation: Rotation::North,
         x: board.width as i32 / 2 - 1,
-        y: if highest >= 20 {
+        y: if highest >= board.spawn_height {
             (highest + 1).min(BOARD_HEIGHT as i32 - 3)
         } else {
-            20
+            board.spawn_height
         },
     };
     if !board.fits(piece, s.rotation, s.x, s.y) {
@@ -187,6 +187,7 @@ pub fn generate_moves_with_rules(board: &Board, piece: Piece, mode: SpinMode) ->
         let mut hash = std::collections::hash_map::DefaultHasher::new();
         board.rows.hash(&mut hash);
         board.width.hash(&mut hash);
+        board.spawn_height.hash(&mut hash);
         piece.hash(&mut hash);
         mode.hash(&mut hash);
         let slot = hash.finish() as usize % CACHE_SIZE;
@@ -285,6 +286,22 @@ pub fn find_input_path(board: &Board, target: Move, mode: SpinMode) -> Option<Ve
 #[cfg(test)]
 mod workspace_tests {
     use super::*;
+    #[test]
+    fn configured_height_controls_full_input_spawn() {
+        let mut board = Board::new(4);
+        board.spawn_height = 26;
+        let start = spawn(&board, Piece::T, false).unwrap();
+        assert_eq!(start.y, 26);
+        board.rows[21] = 0b1000;
+        for piece in crate::engine::header::ALL_PIECES {
+            let moves = generate_moves_with_rules(&board, piece, SpinMode::All);
+            assert!(!moves.is_empty());
+            assert!(moves
+                .iter()
+                .any(|m| find_input_path(&board, *m, SpinMode::All).is_some()));
+        }
+    }
+
     #[test]
     fn epoch_wrap_does_not_leave_stale_visited_states() {
         let mut work = MoveWorkspace::new();

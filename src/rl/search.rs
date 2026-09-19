@@ -123,6 +123,7 @@ impl Node {
 struct Key {
     rows: [u16; 40],
     width: usize,
+    spawn_height: i32,
     current: Option<Piece>,
     hold: Option<Piece>,
     queue: Vec<Piece>,
@@ -144,6 +145,7 @@ impl Key {
         Self {
             rows: s.board.rows,
             width: s.board.width,
+            spawn_height: s.board.spawn_height,
             current: s.has_known_current().then_some(s.current),
             hold: s.hold,
             queue: s.queue.clone(),

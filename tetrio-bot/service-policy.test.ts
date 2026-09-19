@@ -30,6 +30,12 @@ test("PPS parser has a hard five PPS cap and rejects partial numbers", () => {
 });
 test("required settings enforce SRS-X and retain supported spin variants", () => {
   assert.deepEqual(roomProblems(REQUIRED_SETTINGS), []);
+  assert.equal(REQUIRED_SETTINGS.boardheight, 26);
+  assert.ok(
+    roomProblems({ ...REQUIRED_SETTINGS, boardheight: 20 }).includes(
+      "boardheight",
+    ),
+  );
   assert.ok(
     roomProblems({ ...REQUIRED_SETTINGS, kickset: "SRS+" }).includes("kickset"),
   );
@@ -54,13 +60,13 @@ test("worker reservations prevent duplicate rooms, per-user abuse and stale rele
   assert.equal(pool.reserve("room", "b"), null);
   pool.reserve("second", "a");
   assert.equal(pool.reserve("third", "a"), null);
-  for (let i = 0; i < 24; i++) assert.ok(pool.reserve(`r${i}`, `u${i}`));
-  assert.equal(pool.size, 26);
+  for (let i = 0; i < 18; i++) assert.ok(pool.reserve(`r${i}`, `u${i}`));
+  assert.equal(pool.size, 20);
   assert.equal(pool.reserve("overflow", "z"), null);
   pool.release("room", Symbol());
-  assert.equal(pool.size, 26);
+  assert.equal(pool.size, 20);
   pool.release("room", token);
-  assert.equal(pool.size, 25);
+  assert.equal(pool.size, 19);
 });
 test("an adapter timeout still invokes owned process cleanup", async () => {
   let killed = false;

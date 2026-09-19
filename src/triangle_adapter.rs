@@ -157,6 +157,7 @@ fn main() {
     }));
 
     let mut board_width: usize = 4;
+    let mut board_height: i32 = 20;
     let mut spin_mode = SpinMode::All;
     let meta_net = if std::path::Path::new("meta_net.json").exists() {
         if let Ok(file_content) = std::fs::read_to_string("meta_net.json") {
@@ -221,6 +222,12 @@ fn main() {
                     eprintln!("[4wide-bot] Unsupported configuration: requires SRS-X, width 4, multiplier combo and supported spins.");
                     std::process::exit(2);
                 }
+                let height = msg["boardHeight"].as_u64().unwrap_or(20);
+                if ![20, 26].contains(&height) {
+                    eprintln!("[4wide-bot] Unsupported board height; expected 20 or 26.");
+                    std::process::exit(2);
+                }
+                board_height = height as i32;
                 configured = true;
                 spin_mode = match msg["spins"].as_str().unwrap_or("all") {
                     "all-mini+" => SpinMode::AllMiniPlus,
@@ -243,8 +250,7 @@ fn main() {
                 }
                 eprintln!(
                     "[4wide-bot] Config received: board {}x{}",
-                    board_width,
-                    msg["boardHeight"].as_u64().unwrap_or(20)
+                    board_width, board_height
                 );
             }
             "state" => {
@@ -265,6 +271,7 @@ fn main() {
                 // Time to make a move!
                 if let Some(ref state_msg) = last_state {
                     let mut game_state = build_state_from_protocol(state_msg, board_width);
+                    game_state.board.spawn_height = board_height;
                     game_state.spin_mode = spin_mode;
                     if let Some(cap) = msg["garbageCap"].as_f64() {
                         let live_cap = cap.clamp(0.0, 40.0).floor() as u32;

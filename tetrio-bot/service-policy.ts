@@ -1,7 +1,7 @@
 export const MAX_PPS = 5;
 export const REQUIRED_SETTINGS: Record<string, string | number | boolean> = {
   boardwidth: 4,
-  boardheight: 20,
+  boardheight: 26,
   kickset: "SRS-X",
   allow180: true,
   display_hold: true,
@@ -17,6 +17,7 @@ export const REQUIRED_SETTINGS: Record<string, string | number | boolean> = {
 const DEFAULTS = {
   ...REQUIRED_SETTINGS,
   boardwidth: 10,
+  boardheight: 20,
   kickset: "SRS+",
   spinbonuses: "T-spins",
 };
@@ -40,7 +41,7 @@ export function requiredChanges(options: Record<string, any>) {
 export function engineProblems(e: any): string[] {
   const bad: string[] = [];
   if (e.kickTableName !== "SRS-X") bad.push("kickset");
-  if (e.board.width !== 4 || e.board.height !== 20) bad.push("board size");
+  if (e.board.width !== 4 || e.board.height !== 26) bad.push("board size");
   if (
     !e.misc.allowed.spin180 ||
     !e.misc.allowed.hold ||
@@ -78,7 +79,7 @@ export function envInt(
 export class RoomPool {
   private rooms = new Map<string, { user: string; token: symbol }>();
   constructor(
-    readonly limit = 26,
+    readonly limit = 20,
     readonly perUser = 2,
   ) {}
   reserve(room: string, user: string): symbol | null {

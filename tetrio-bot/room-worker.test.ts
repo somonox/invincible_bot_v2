@@ -103,7 +103,7 @@ function fixture(
 }
 const engine = () => ({
   kickTableName: "SRS-X",
-  board: { width: 4, height: 20 },
+  board: { width: 4, height: 26 },
   misc: { allowed: { spin180: true, hold: true, hardDrop: true } },
   gameOptions: {
     comboTable: "multiplier",

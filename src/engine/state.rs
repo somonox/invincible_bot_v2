@@ -297,10 +297,10 @@ impl GameState {
         // Check if piece fits at spawn position
         let spawn_x = (self.board.width as i32) / 2 - 1;
         let highest = self.board.highest_row() as i32;
-        let spawn_y = if highest >= 20 {
+        let spawn_y = if highest >= self.board.spawn_height {
             (highest + 1).min(BOARD_HEIGHT as i32 - 3)
         } else {
-            20
+            self.board.spawn_height
         };
 
         if !self
@@ -438,10 +438,10 @@ impl GameState {
         // Check if next piece fits at spawn position
         let spawn_x = (self.board.width as i32) / 2 - 1;
         let highest = self.board.highest_row() as i32;
-        let spawn_y = if highest >= 20 {
+        let spawn_y = if highest >= self.board.spawn_height {
             (highest + 1).min(BOARD_HEIGHT as i32 - 3)
         } else {
-            20
+            self.board.spawn_height
         };
 
         if !self
@@ -500,10 +500,10 @@ impl GameState {
         // Check if next piece fits at spawn position
         let spawn_x = (self.board.width as i32) / 2 - 1;
         let highest = self.board.highest_row() as i32;
-        let spawn_y = if highest >= 20 {
+        let spawn_y = if highest >= self.board.spawn_height {
             (highest + 1).min(BOARD_HEIGHT as i32 - 3)
         } else {
-            20
+            self.board.spawn_height
         };
 
         if self.current_known

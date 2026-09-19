@@ -16,7 +16,7 @@ fn online_play_uses_queue_defense_and_refreshes_back_to_pc() {
         writeln!(
             input,
             "{}",
-            json!({"type":"config","boardWidth":4,"kicks":"SRS-X","spins":"all"})
+            json!({"type":"config","boardWidth":4,"boardHeight":26,"kicks":"SRS-X","spins":"all"})
         )
         .unwrap();
         for incoming in [8, 0] {
