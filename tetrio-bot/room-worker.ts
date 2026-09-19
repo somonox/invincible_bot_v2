@@ -510,7 +510,7 @@ export async function runRoomWorker(
     await reconcile();
     await notice(
       "welcome",
-      "Bot connected: SRS-X required, PPS limit 5. Give the bot host and use !setup for required settings. Matches with this bot are saved as replays. !bot for help.",
+      "Bot connected: SRS-X required, PPS limit 5. Give the bot host and use !setup for required settings. Matches with this bot are saved as replays. !bot for help. 버그나 건의 사항은 a6a6_으로 DM 주세요.",
     );
     await left;
   } catch (error: any) {
