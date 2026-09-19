@@ -7,9 +7,8 @@ import {
   requiredChanges,
   parsePps,
   RoomPool,
-  engineProblems,
 } from "./service-policy";
-import { SearchLimiter, withTimeout } from "./search-limiter";
+import { withTimeout } from "./timeout";
 import { installBotRuntime } from "./bot-runtime";
 
 test("PPS parser has a hard five PPS cap and rejects partial numbers", () => {
@@ -63,43 +62,63 @@ test("worker reservations prevent duplicate rooms, per-user abuse and stale rele
   pool.release("room", token);
   assert.equal(pool.size, 19);
 });
-test("search admission is FIFO and abort removes a waiting job", async () => {
-  const slots = new SearchLimiter(1, 3);
-  const controller = new AbortController();
-  let release!: () => void;
-  const order: number[] = [];
-  const first = slots.run(async () => {
-    order.push(1);
-    await new Promise<void>((r) => (release = r));
-  }, new AbortController().signal);
-  const canceled = slots.run(async () => {
-    order.push(2);
-  }, controller.signal);
-  const third = slots.run(async () => {
-    order.push(3);
-  }, new AbortController().signal);
-  controller.abort();
-  await assert.rejects(canceled);
-  await Promise.resolve();
-  release();
-  await Promise.all([first, third]);
-  assert.deepEqual(order, [1, 3]);
-});
-test("adapter timeout releases admission so another room can search", async () => {
-  const slots = new SearchLimiter(1, 2);
+test("an adapter timeout still invokes owned process cleanup", async () => {
   let killed = false;
-  const stuck = slots.run(
-    () =>
-      withTimeout(new Promise(() => {}), 10, "adapter", () => {
-        killed = true;
-      }),
-    new AbortController().signal,
+  await assert.rejects(
+    withTimeout(new Promise(() => {}), 10, "adapter", () => {
+      killed = true;
+    }),
+    /timed out/,
   );
-  const next = slots.run(async () => 42, new AbortController().signal);
-  await assert.rejects(stuck, /timed out/);
-  assert.equal(await next, 42);
   assert.ok(killed);
 });
+test("workers start searches independently without a shared three-search gate", async () => {
+  class Wrapper {
+    static frames: any;
+    static nextFrame() {
+      return 0;
+    }
+    config = { pps: 5 };
+    nextFrame = 0;
+    adapter: any;
+    roundSignal = new AbortController().signal;
+    abortRound = () => {};
+    declare tick: any;
+  }
+  installBotRuntime(Wrapper);
+  let started = 0;
+  const releases: ((value: any) => void)[] = [];
+  const jobs = Array.from({ length: 5 }, () => {
+    const w = new Wrapper();
+    w.adapter = {
+      update() {},
+      play: () => {
+        started++;
+        return new Promise((r) => releases.push(r));
+      },
+    };
+    return w.tick(
+      {
+        frame: 1,
+        subframe: 0,
+        stats: { pieces: 0 },
+        garbageQueue: {
+          queue: [],
+          options: { garbage: { speed: 20 }, cap: { max: 8 } },
+        },
+        dynamic: { garbageCap: { get: () => 8 } },
+      },
+      [],
+    );
+  });
+  try {
+    assert.equal(started, 5);
+  } finally {
+    for (const release of releases) release({ keys: ["hardDrop"] });
+    await Promise.all(jobs);
+  }
+});
+
 test("runtime clamps PPS even if wrapper config bypasses chat and sends fresh packet data", async () => {
   class Wrapper {
     static frames: any;
@@ -116,7 +135,7 @@ test("runtime clamps PPS even if wrapper config bypasses chat and sends fresh pa
     abortRound = () => {};
     declare tick: any;
   }
-  installBotRuntime(Wrapper, new SearchLimiter(1, 2));
+  installBotRuntime(Wrapper);
   const wrapper = new Wrapper();
   let captured: any;
   wrapper.adapter = {

@@ -6,13 +6,12 @@ import {
   requiredChanges,
   roomProblems,
 } from "./service-policy";
-import { withTimeout } from "./search-limiter";
+import { withTimeout } from "./timeout";
 import type { ReplayStore } from "./replay-store";
 
 export interface WorkerOptions {
   adapterPath: string;
   defaultPps: number;
-  idleMs: number;
   replays: ReplayStore;
   signal: AbortSignal;
   createClient?: () => Promise<any>;
@@ -30,9 +29,7 @@ export async function runRoomWorker(
   let closing = false,
     faulted = false,
     roomPps = options.defaultPps;
-  let lastActivity = Date.now(),
-    lastConfigAttempt = 0;
-  let idleTimer: ReturnType<typeof setInterval> | undefined;
+  let applyingSettings = false;
   let finish!: () => void;
   const left = new Promise<void>((resolve) => {
     finish = () => {
@@ -144,19 +141,6 @@ export async function runRoomWorker(
             "Spectator switch",
           );
         }
-        if (room.isHost && Date.now() - lastConfigAttempt >= 5000) {
-          const changes = requiredChanges(room.options ?? {});
-          if (changes.length) {
-            lastConfigAttempt = Date.now();
-            await withTimeout(
-              Promise.resolve(room.update(...changes)),
-              5000,
-              "Room settings",
-            ).catch((error) =>
-              console.error(`[Worker-${roomid}] Settings: ${error.message}`),
-            );
-          }
-        }
         problems = roomProblems(room.options ?? {});
         const bracket = problems.length || faulted ? "spectator" : "player";
         if (room.self?.bracket !== bracket)
@@ -168,7 +152,7 @@ export async function runRoomWorker(
         if (problems.length)
           await notice(
             "settings",
-            `Bot requires SRS-X, 4x20, hold/180/hard drop, multiplier and combo blocking. Fix: ${problems.join(", ")}. Give the bot host to apply settings automatically.`,
+            `Bot requires SRS-X, 4x20, hold/180/hard drop, multiplier and combo blocking. Fix: ${problems.join(", ")}. Give the bot host, then use !setup to apply settings.`,
           );
       } while (checkAgain && !closing);
     } finally {
@@ -230,31 +214,84 @@ export async function runRoomWorker(
     on("room.update", reconcile);
     on("room.update.host", reconcile);
     on("room.update.bracket", reconcile);
-    on("room.player.remove", reconcile);
+    // Do not queue empty-room departure behind pending chat or settings requests.
+    on("room.player.remove", () => {
+      if (!room.players.some((p: any) => p._id !== client.user.id)) {
+        stopRound();
+        finish();
+        return;
+      }
+      return reconcile();
+    });
     on("room.player.add", () => {
-      lastActivity = Date.now();
       return reconcile();
     });
     on("room.chat", async (chat: any) => {
       if (chat.system || chat.user._id === client.user.id) return;
       const parts = chat.content.trim().split(/\s+/);
       const command = parts[0].toLowerCase();
-      if (!["!pps", "!bot", "!leave"].includes(command)) return;
+      if (!["!pps", "!bot", "!leave", "!setup"].includes(command)) return;
       if (command === "!bot") {
         await notice(
           "status",
-          `4wide bot: SRS-X, PPS ${roomPps}/5. Matches are saved as .ttrm replays. !pps <0.1-5>, !leave (host/inviter).`,
+          `4wide bot: SRS-X, PPS ${roomPps}/5. Matches are saved as .ttrm replays. !setup applies required settings (bot needs host). !pps <0.1-5>, !leave (host/inviter).`,
         );
         return;
       }
       if (chat.user._id !== room.owner && chat.user._id !== inviter) {
         await notice(
           "permission",
-          "Only the room host or bot inviter can change PPS or remove the bot.",
+          "Only the room host or bot inviter can use control commands.",
         );
         return;
       }
-      lastActivity = Date.now();
+      if (command === "!setup") {
+        if (parts.length !== 1) {
+          await notice("setup", "Use !setup with no arguments.");
+          return;
+        }
+        if (!room.isHost) {
+          await notice(
+            "setup",
+            "Give the bot host, then use !setup to apply the required settings.",
+          );
+          return;
+        }
+        if (room.state === "ingame") {
+          await notice(
+            "setup",
+            "Use !setup in the lobby after the match ends.",
+          );
+          return;
+        }
+        if (applyingSettings) return;
+        applyingSettings = true;
+        try {
+          const changes = requiredChanges(room.options ?? {});
+          if (changes.length)
+            await withTimeout(
+              Promise.resolve(room.update(...changes)),
+              5000,
+              "Room settings",
+            );
+          await reconcile();
+          const problems = roomProblems(room.options ?? {});
+          await notice(
+            "setup",
+            problems.length
+              ? `Settings still required: ${problems.join(", ")}.`
+              : "Settings ready: SRS-X, 4x20, hold/180/hard drop, multiplier, combo blocking and PC bonus 10.",
+          );
+        } catch (error: any) {
+          await notice(
+            "setup",
+            `Settings could not be applied: ${error.message}. Give the bot host and retry !setup.`,
+          );
+        } finally {
+          applyingSettings = false;
+        }
+        return;
+      }
       if (command === "!leave") {
         finish();
         return;
@@ -275,7 +312,6 @@ export async function runRoomWorker(
     // Room's own handler has already initialized ReplayManager by this event.
     // Subscribe to raw replay streams without replaying every opponent engine.
     on("game.ready", (data: any) => {
-      lastActivity = Date.now();
       scopes.clear();
       if (data.isNew) {
         replayBytes = 0;
@@ -305,7 +341,6 @@ export async function runRoomWorker(
       saveReplay(false);
       stopScopes();
       faulted = false;
-      lastActivity = Date.now();
       void reconcile().catch(finish);
     });
     on("client.game.abort", () => {
@@ -315,7 +350,6 @@ export async function runRoomWorker(
     });
     on("client.game.over", () => stopRound());
     on("client.game.round.start", ([tick, engine]: any[]) => {
-      lastActivity = Date.now();
       stopRound();
       // Self.init emits this event during Game construction. Use the passed
       // engine, not client.game (which may still refer to the previous round).
@@ -418,25 +452,13 @@ export async function runRoomWorker(
     await reconcile();
     await notice(
       "welcome",
-      "Bot connected: SRS-X required, PPS limit 5. Matches with this bot are saved as replays. !bot for help.",
-    );
-    idleTimer = setInterval(
-      () => {
-        if (closing) return;
-        if (
-          room.state !== "ingame" &&
-          Date.now() - lastActivity >= options.idleMs
-        )
-          finish();
-      },
-      Math.min(30000, options.idleMs),
+      "Bot connected: SRS-X required, PPS limit 5. Give the bot host and use !setup for required settings. Matches with this bot are saved as replays. !bot for help.",
     );
     await left;
   } catch (error: any) {
     console.error(`[Worker-${roomid}] ${error.message}`);
   } finally {
     closing = true;
-    clearInterval(idleTimer);
     options.signal.removeEventListener("abort", abort);
     stopRound();
     saveReplay(true);

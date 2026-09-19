@@ -66,7 +66,6 @@ function fixture(
   const promise = runRoomWorker("test", "human", {
     adapterPath: "unused",
     defaultPps: 2,
-    idleMs: 60000,
     signal: shutdown.signal,
     replays: {
       limits: { maxFileBytes: 100000 },
@@ -108,23 +107,66 @@ const engine = () => ({
   pc: { garbage: 10 },
   handling: { arr: 0, sdf: 41 },
 });
-test("host fixes settings; non-host spectates until settings or host changes", async () => {
+function chat(f: any, id: string, content: string) {
+  f.client.emit("room.chat", { system: false, user: { _id: id }, content });
+}
+test("settings change only through authorized setup with bot host permission", async () => {
   for (const host of [true, false]) {
     const f = fixture(host, { ...REQUIRED_SETTINGS, kickset: "SRS+" });
     await until(() => f.calls.chats.length > 0);
-    assert.equal(f.room.self.bracket, host ? "player" : "spectator");
+    assert.equal(f.room.self.bracket, "spectator");
+    assert.equal(f.calls.updates.length, 0);
     if (!host) {
+      chat(f, "human", "!setup");
+      await pause();
       assert.equal(f.calls.updates.length, 0);
       f.room.owner = "bot";
       f.client.emit("room.update.host", "bot");
-      await until(() => f.room.self.bracket === "player");
+      await pause();
+      assert.equal(f.calls.updates.length, 0); // Host transfer alone must not edit settings.
     }
+    chat(f, "stranger", "!setup");
+    await pause();
+    assert.equal(f.calls.updates.length, 0);
+    f.room.state = "ingame";
+    chat(f, "human", "!setup");
+    await pause();
+    assert.equal(f.calls.updates.length, 0);
+    f.room.state = "lobby";
+    chat(f, "human", "!setup extra");
+    await pause();
+    assert.equal(f.calls.updates.length, 0);
+    chat(f, "human", "!setup");
+    await until(() => f.room.self.bracket === "player");
     assert.equal(f.room.options.kickset, "SRS-X");
+    assert.equal(f.calls.updates.length, 1);
+    f.room.options.kickset = "SRS+";
+    f.client.emit("room.update", {});
+    await until(() => f.room.self.bracket === "spectator");
+    assert.equal(f.calls.updates.length, 1);
     f.shutdown.abort();
     await f.promise;
-    assert.ok(f.client.destroyed);
   }
 });
+test("remaining spectators keep the room occupied; last departure stops the round and saves partial replay", async () => {
+  const f = fixture();
+  await until(() => f.calls.chats.length > 0);
+  f.client.emit("client.game.round.start", [() => {}, engine()]);
+  await pause();
+  f.room.replay = { export: () => ({ version: 1, replay: { rounds: [[]] } }) };
+  f.room.players.push({ _id: "spectator", bracket: "spectator" });
+  f.room.players = f.room.players.filter((p: any) => p._id !== "human");
+  f.client.emit("room.player.remove", "human");
+  await pause();
+  assert.equal(f.client.destroyed, false);
+  f.room.players = f.room.players.filter((p: any) => p._id !== "spectator");
+  f.client.emit("room.player.remove", "spectator");
+  assert.equal(f.calls.wrappers[0].stops, 1);
+  await until(() => f.client.destroyed);
+  await f.promise;
+  assert.equal(f.calls.saved[0].partial, true);
+});
+
 test("full round engine is checked even when lobby options appear compatible", async () => {
   const f = fixture();
   await until(() => f.room.self.bracket === "player");
@@ -191,7 +233,6 @@ test("room leave before join settles cannot strand a worker slot", async () => {
   await runRoomWorker("test", "human", {
     adapterPath: "unused",
     defaultPps: 2,
-    idleMs: 100,
     signal: new AbortController().signal,
     replays: { limits: { maxFileBytes: 1000 }, save: async () => "" } as any,
     createClient: async () => client,
@@ -242,10 +283,9 @@ test("late initialization and search failures cannot stop the next round", async
     await f.promise;
   }
 });
-test("spawn errors before adapter info are contained and idle lobbies are reclaimed", async () => {
+test("spawn errors before adapter info are contained without evicting occupied rooms", async () => {
   let adapter: any;
   const f = fixture(true, REQUIRED_SETTINGS, {
-    idleMs: 20,
     createAdapter: () => (adapter = { stop() {} }),
     createWrapper: () => ({
       config: { pps: 2 },
@@ -262,6 +302,8 @@ test("spawn errors before adapter info are contained and idle lobbies are reclai
   await until(() => f.room.self.bracket === "player");
   f.client.emit("client.game.round.start", [() => {}, engine()]);
   await until(() => f.room.self.bracket === "spectator");
+  assert.equal(f.client.destroyed, false);
+  f.shutdown.abort();
   await f.promise;
   assert.ok(f.client.destroyed);
 });

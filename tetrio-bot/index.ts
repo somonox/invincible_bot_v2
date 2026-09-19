@@ -2,21 +2,14 @@ import { Client } from "@haelp/teto";
 import { BotWrapper } from "@haelp/teto/utils";
 import path from "path";
 import { existsSync } from "node:fs";
-import { availableParallelism } from "node:os";
 import { RoomPool, envInt } from "./service-policy";
-import { SearchLimiter } from "./search-limiter";
 import { ReplayStore } from "./replay-store";
 import { installBotRuntime } from "./bot-runtime";
 import { runRoomWorker } from "./room-worker";
 
 const maxWorkers = envInt(process.env, "BOT_MAX_WORKERS", 20, 1, 32);
 const pool = new RoomPool(maxWorkers);
-const idleMs = envInt(process.env, "BOT_IDLE_MINUTES", 15, 1, 120) * 60000;
-const searchLimiter = new SearchLimiter(
-  Math.max(1, Math.min(3, availableParallelism() - 1)),
-  maxWorkers,
-);
-installBotRuntime(BotWrapper, searchLimiter);
+installBotRuntime(BotWrapper);
 const replays = new ReplayStore(
   path.resolve((import.meta as any).dir, "../replays"),
   {
@@ -66,7 +59,7 @@ console.log(
   `[4wide-bot] Master client logged in as: ${masterClient.user.username} (ID: ${masterClient.user.id})`,
 );
 console.log(
-  `[4wide-bot] Waiting for invites: ${maxWorkers} rooms, ${searchLimiter.limit} concurrent searches, PPS cap 5.`,
+  `[4wide-bot] Waiting for invites: ${maxWorkers} rooms, independent worker searches, PPS cap 5.`,
 );
 masterClient.social.status("online", "menus");
 
@@ -120,7 +113,6 @@ masterClient.on("social.invite", (invite) => {
   const worker = runRoomWorker(roomid, invite.sender, {
     adapterPath,
     defaultPps: 2,
-    idleMs,
     replays,
     signal: shutdown.signal,
   }).finally(() => {

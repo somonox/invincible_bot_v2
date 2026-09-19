@@ -1,7 +1,7 @@
 import { garbageContext } from "./garbage-context";
 import { MAX_PPS } from "./service-policy";
-import { SearchLimiter, withTimeout } from "./search-limiter";
-export function installBotRuntime(BotWrapper: any, slots: SearchLimiter) {
+import { withTimeout } from "./timeout";
+export function installBotRuntime(BotWrapper: any) {
   // Monkey-patch BotWrapper.frames to space out consecutive movements/rotations with frame gaps
   BotWrapper.frames = (engine: any, keys: string[]) => {
     const round = (r: number) => Math.round(r * 10) / 10;
@@ -68,25 +68,19 @@ export function installBotRuntime(BotWrapper: any, slots: SearchLimiter) {
           0.1,
           Math.min(MAX_PPS, Number(this.config.pps) || 2),
         );
-        const { keys } = await withTimeout(
-          slots.run(async () => {
-            this.adapter.update(engine, {
-              ...fullData.state,
-              garbageContext: garbageContext(
-                engine,
-                this.config.pps,
-                this.lastInputFrames,
-              ),
-            });
-            return withTimeout<{ keys: string[] }>(
-              this.adapter.play(engine, fullData.play),
-              1500,
-              "Adapter move",
-              () => this.abortRound(),
-            );
-          }, this.roundSignal),
-          5000,
-          "Search admission",
+        if (this.roundSignal.aborted) return [];
+        this.adapter.update(engine, {
+          ...fullData.state,
+          garbageContext: garbageContext(
+            engine,
+            this.config.pps,
+            this.lastInputFrames,
+          ),
+        });
+        const { keys } = await withTimeout<{ keys: string[] }>(
+          this.adapter.play(engine, fullData.play),
+          1500,
+          "Adapter move",
           () => this.abortRound(),
         );
         this.lastInputFrames = keys.length * 2;
