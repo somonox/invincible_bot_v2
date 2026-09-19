@@ -78,7 +78,7 @@ export function envInt(
 export class RoomPool {
   private rooms = new Map<string, { user: string; token: symbol }>();
   constructor(
-    readonly limit = 20,
+    readonly limit = 26,
     readonly perUser = 2,
   ) {}
   reserve(room: string, user: string): symbol | null {

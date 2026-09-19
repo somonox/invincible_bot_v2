@@ -7,7 +7,7 @@ import { ReplayStore } from "./replay-store";
 import { installBotRuntime } from "./bot-runtime";
 import { runRoomWorker } from "./room-worker";
 
-const maxWorkers = envInt(process.env, "BOT_MAX_WORKERS", 20, 1, 32);
+const maxWorkers = envInt(process.env, "BOT_MAX_WORKERS", 26, 1, 32);
 const pool = new RoomPool(maxWorkers);
 installBotRuntime(BotWrapper);
 const replays = new ReplayStore(

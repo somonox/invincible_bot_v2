@@ -28,10 +28,10 @@ existing [rule limitations](TETRIO_RULES.md) still apply.
 - `!leave` removes the worker from the room.
 - `!pps` and `!leave` require the room host or original inviter.
 - `!bot` displays status and help for anyone in the room.
-- The pool defaults to 20 rooms (previously 10), at most two per inviter, with
+- The pool defaults to 26 rooms, at most two per inviter, with
   duplicate room invitations ignored. Reservations are released on exit/failure.
 - Each worker searches independently, as before; there is no shared search queue
-  or three-search concurrency limit. The room pool still defaults to 20 workers.
+  or three-search concurrency limit. The room pool still defaults to 26 workers.
 - The worker leaves as soon as no other room members remain, stops its adapter
   and saves a partial replay. Spectators count as occupants. Occupied rooms have
   no inactivity timeout; `BOT_IDLE_MINUTES` is no longer used.
@@ -62,7 +62,7 @@ TETR.IO UI still needs a live-match check; tests validate saved JSON and lifecyc
 
 | Environment variable | Default | Allowed range |
 | --- | --- | --- |
-| `BOT_MAX_WORKERS` | 20 | 1-32 |
+| `BOT_MAX_WORKERS` | 26 | 1-32 |
 | `BOT_LOG_MOVES` | off | `1` enables per-move diagnostics |
 
 Set overrides in `tetrio-bot/.env` and restart to apply them. PPS 5 is a hard
