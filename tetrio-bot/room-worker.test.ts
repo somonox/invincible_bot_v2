@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
+import { ReplayManager } from "@haelp/teto/classes";
 import { runRoomWorker } from "./room-worker";
 import { REQUIRED_SETTINGS } from "./service-policy";
 const pause = () => new Promise((r) => setTimeout(r, 1));
@@ -361,6 +362,88 @@ test("large replay streams stay attached through match end", async () => {
   f.client.emit("client.game.end", {});
   await until(() => f.calls.saved.length === 1);
   assert.equal(f.calls.saved[0].partial, false);
+  f.shutdown.abort();
+  await f.promise;
+});
+
+test("real SDK ReplayManager records outgoing self frames and incoming opponent frames in separate rounds", async () => {
+  const f = fixture();
+  await until(() => f.calls.chats.length > 0);
+  const players = (offset: number) => [
+    {
+      userid: "bot",
+      gameid: 1 + offset,
+      naturalorder: 0,
+      options: { username: "bot" },
+    },
+    {
+      userid: "human",
+      gameid: 2 + offset,
+      naturalorder: 1,
+      options: { username: "human" },
+    },
+  ];
+  const manager = new ReplayManager(
+    players(0) as any,
+    [
+      { _id: "bot", username: "bot" },
+      { _id: "human", username: "human" },
+    ] as any,
+  );
+  f.room.replay = manager;
+  // The SDK's Room subscribes only to incoming game.replay; model that direction.
+  f.client.on("game.replay", (data: any) => manager.pipe(data));
+  for (const offset of [0, 10]) {
+    manager.addRound(players(offset) as any);
+    f.client.emit("game.ready", {
+      isNew: offset === 0,
+      players: players(offset),
+    });
+    const ownFrames = [
+      { type: "start", frame: 0, data: {} },
+      { type: "full", frame: 0, data: {} },
+      { type: "keydown", frame: 5, data: { key: "hardDrop", subframe: 0 } },
+      { type: "keyup", frame: 6, data: { key: "hardDrop", subframe: 0 } },
+      { type: "ige", frame: 7, data: { id: 42 } },
+    ];
+    f.client.emit("client.ribbon.send", {
+      command: "game.replay",
+      data: { gameid: 1 + offset, provisioned: 12, frames: ownFrames },
+    });
+    f.client.emit("game.replay", {
+      gameid: 2 + offset,
+      frames: [
+        { type: "keydown", frame: 8, data: { key: "hardDrop", subframe: 0 } },
+      ],
+    });
+    f.client.emit("client.ribbon.send", {
+      command: "room.chat",
+      data: { content: "not gameplay" },
+    });
+    f.client.emit("client.ribbon.send", {
+      command: "game.replay",
+      data: { gameid: 999, frames: ownFrames },
+    });
+    const round = manager.export().replay.rounds.at(-1)!;
+    assert.deepEqual(round[0].replay.events, ownFrames);
+    assert.equal(round[0].replay.frames, 7);
+    assert.equal(round[1].replay.events.length, 1);
+  }
+  manager.end({ self: "bot" });
+  f.client.emit("client.game.end", {});
+  await until(() => f.calls.saved.length === 1);
+  const saved = f.calls.saved[0].data;
+  assert.equal(saved.replay.rounds.length, 2);
+  for (const round of saved.replay.rounds) {
+    assert.equal(
+      round[0].replay.events.filter((e: any) => e.type === "keydown").length,
+      1,
+    );
+    assert.equal(
+      round[1].replay.events.filter((e: any) => e.type === "keydown").length,
+      1,
+    );
+  }
   f.shutdown.abort();
   await f.promise;
 });

@@ -44,6 +44,10 @@ existing [rule limitations](TETRIO_RULES.md) still apply.
 
 The SDK ReplayManager exports native TETR.IO versus JSON to `replays/*.ttrm`.
 Opponent frame streams are subscribed without simulating each opponent engine.
+The bot's own transmitted `game.replay` packets are separately captured through
+`client.ribbon.send` and piped into the same ReplayManager. Incoming event listeners
+do not receive outgoing gameplay. This records the bot's start/full state, actual
+key events and IGEs without re-sending packets or copying planned future inputs.
 A full match is saved on match end, not when the bot alone tops out. Interrupted
 matches are marked `.partial.ttrm`. Joining announces that games are recorded.
 The files stay local and are excluded from git; no replay is published or sent.
@@ -69,6 +73,7 @@ service ceiling, not an environment override. See [hosting commands](HOSTING.md)
 `cd tetrio-bot && bun node_modules/typescript/bin/tsc --noEmit && bun test`
 checks typing, settings/host transitions, speed/command permissions, independent
 concurrent searches, process failures, stale rounds, immediate empty-room cleanup, replay
-lifecycle, concurrent writes and preservation beyond the former retention limits. Worker tests use injected fake clients
+lifecycle (including outgoing self and incoming opponent frames through the real
+SDK ReplayManager), concurrent writes and preservation beyond former retention limits. Worker tests use injected fake clients
 and never log into TETR.IO. `cargo test --locked --no-default-features --all-targets`
 covers the adapter protocol and existing search/rule regressions.

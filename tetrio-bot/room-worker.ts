@@ -41,6 +41,7 @@ export async function runRoomWorker(
   const saved = new WeakSet<object>();
   let observedOwner: string | undefined;
   let returnHost: string | undefined;
+  let selfReplayGameId: number | undefined;
   const scopes = new Set<number>();
   const stopRound = (target = round) => {
     if (!target || target.stopped) return;
@@ -340,9 +341,25 @@ export async function runRoomWorker(
       if (round) round.wrapper.config.pps = value;
       await notice("pps", `PPS updated to ${value} (maximum 5).`);
     });
+    // Client.on("game.replay") sees incoming opponent frames only. Self's
+    // actual start/full/key/IGE frames travel through Ribbon's send path.
+    // Pipe them into storage directly; emitting game.replay again would send
+    // duplicate gameplay to the server instead of notifying a local listener.
+    on("client.ribbon.send", ({ command, data }: any) => {
+      if (
+        command !== "game.replay" ||
+        selfReplayGameId === undefined ||
+        data?.gameid !== selfReplayGameId
+      )
+        return;
+      room.replay?.pipe(data);
+    });
     // Room's own handler has already initialized ReplayManager by this event.
     // Subscribe to raw replay streams without replaying every opponent engine.
     on("game.ready", (data: any) => {
+      selfReplayGameId = data.players.find(
+        (p: any) => p.userid === client.user.id,
+      )?.gameid;
       scopes.clear();
       for (const player of data.players)
         if (player.userid !== client.user.id) {
@@ -351,12 +368,14 @@ export async function runRoomWorker(
         }
     });
     on("client.game.end", () => {
+      selfReplayGameId = undefined;
       saveReplay(false);
       stopScopes();
       faulted = false;
       void reconcile().catch(finish);
     });
     on("client.game.abort", () => {
+      selfReplayGameId = undefined;
       saveReplay(true);
       stopScopes();
       faulted = false;
