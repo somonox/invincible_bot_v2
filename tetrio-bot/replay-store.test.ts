@@ -7,62 +7,58 @@ import {
   writeFile,
   utimes,
   rm,
+  stat,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { ReplayStore } from "./replay-store";
-test("replays retain native JSON, unique names and bounded files under concurrent saves", async () => {
+test("replays keep old files above the former count cap and snapshot concurrent saves", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "invincible-replay-test-"));
   try {
-    const store = new ReplayStore(dir, {
-      maxFiles: 2,
-      maxBytes: 10000,
-      maxAgeMs: 86400000,
-      maxFileBytes: 1000,
-    });
+    const store = new ReplayStore(dir);
+    await Promise.all(
+      Array.from({ length: 1001 }, async (_, i) => {
+        const file = path.join(dir, `invincible-old-${i}.ttrm`);
+        await writeFile(file, "keep");
+        await utimes(file, new Date(0), new Date(0));
+      }),
+    );
     const replay = { version: 1, replay: { rounds: [[]] } };
-    await writeFile(path.join(dir, "unmanaged.ttrm"), "keep");
-    await Promise.all([
-      store.save("../../room", replay),
+    const first = store.save("../../room", replay);
+    replay.version = 2;
+    const files = await Promise.all([
+      first,
       store.save("room", replay),
       store.save("room", replay, true),
     ]);
-    const files = (await readdir(dir)).filter((f) =>
-      f.startsWith("invincible-"),
-    );
-    assert.equal(files.length, 2);
-    for (const file of files) {
-      assert.deepEqual(
-        JSON.parse(await readFile(path.join(dir, file), "utf8")),
-        replay,
-      );
-      assert.ok(!file.includes("/"));
-    }
+    await store.flush();
+    await store.prepare();
+    assert.equal((await readdir(dir)).length, 1004);
+    assert.equal(new Set(files).size, 3);
+    assert.equal(JSON.parse(await readFile(files[0], "utf8")).version, 1);
+    assert.equal(JSON.parse(await readFile(files[1], "utf8")).version, 2);
+    assert.ok(files[2].endsWith(".partial.ttrm"));
+    for (const file of files) assert.equal(path.dirname(file), dir);
     assert.equal(
-      await readFile(path.join(dir, "unmanaged.ttrm"), "utf8"),
+      await readFile(path.join(dir, "invincible-old-0.ttrm"), "utf8"),
       "keep",
     );
-    await assert.rejects(store.save("room", { large: "x".repeat(2000) }));
-    for (const file of files)
-      await utimes(path.join(dir, file), new Date(0), new Date(0));
-    await store.maintain();
-    assert.deepEqual(await readdir(dir), ["unmanaged.ttrm"]);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
 });
-test("replay byte quota evicts old managed files before accepting the next", async () => {
+test("replays larger than the former per-file cap are saved in full", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "invincible-replay-test-"));
   try {
-    const store = new ReplayStore(dir, {
-      maxFiles: 20,
-      maxBytes: 100,
-      maxAgeMs: 86400000,
-      maxFileBytes: 100,
-    });
-    await store.save("room", { data: "x".repeat(60) });
-    await store.save("room", { data: "y".repeat(60) });
-    assert.equal((await readdir(dir)).length, 1);
+    const store = new ReplayStore(dir);
+    const replay = { data: "x".repeat(33 * 1024 * 1024) };
+    const file = await store.save("room", replay);
+    await store.flush();
+    assert.equal(
+      (await stat(file)).size,
+      Buffer.byteLength(JSON.stringify(replay)),
+    );
+    assert.deepEqual(await readdir(dir), [path.basename(file)]);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

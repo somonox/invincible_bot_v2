@@ -39,8 +39,8 @@ export async function runRoomWorker(
   });
   const notices = new Map<string, number>();
   const saved = new WeakSet<object>();
-  let replayBytes = 0,
-    replayDisabled = false;
+  let observedOwner: string | undefined;
+  let returnHost: string | undefined;
   const scopes = new Set<number>();
   const stopRound = (target = round) => {
     if (!target || target.stopped) return;
@@ -212,7 +212,13 @@ export async function runRoomWorker(
     );
     if (closing) return;
     on("room.update", reconcile);
-    on("room.update.host", reconcile);
+    observedOwner = room.owner;
+    on("room.update.host", (owner: string) => {
+      if (owner === client.user.id && observedOwner !== owner)
+        returnHost = observedOwner;
+      observedOwner = owner;
+      return reconcile();
+    });
     on("room.update.bracket", reconcile);
     // Do not queue empty-room departure behind pending chat or settings requests.
     on("room.player.remove", () => {
@@ -234,11 +240,15 @@ export async function runRoomWorker(
       if (command === "!bot") {
         await notice(
           "status",
-          `4wide bot: SRS-X, PPS ${roomPps}/5. Matches are saved as .ttrm replays. !setup applies required settings (bot needs host). !pps <0.1-5>, !leave (host/inviter).`,
+          `4wide bot: SRS-X, PPS ${roomPps}/5. Matches are saved as .ttrm replays. !setup applies required settings and returns host (bot needs host). !pps <0.1-5>, !leave (host/inviter).`,
         );
         return;
       }
-      if (chat.user._id !== room.owner && chat.user._id !== inviter) {
+      if (
+        chat.user._id !== room.owner &&
+        chat.user._id !== inviter &&
+        !(command === "!setup" && room.isHost && chat.user._id === returnHost)
+      ) {
         await notice(
           "permission",
           "Only the room host or bot inviter can use control commands.",
@@ -276,16 +286,37 @@ export async function runRoomWorker(
             );
           await reconcile();
           const problems = roomProblems(room.options ?? {});
+          if (problems.length) {
+            await notice(
+              "setup",
+              `Settings still required: ${problems.join(", ")}.`,
+            );
+            return;
+          }
+          if (closing) return;
+          const recipient = room.players.some((p: any) => p._id === returnHost)
+            ? returnHost
+            : chat.user._id;
+          let returned = false;
+          if (
+            room.isHost &&
+            room.players.some((p: any) => p._id === recipient)
+          ) {
+            await withTimeout(
+              Promise.resolve(room.transferHost(recipient)),
+              5000,
+              "Host return",
+            );
+            returned = room.owner === recipient;
+          }
           await notice(
             "setup",
-            problems.length
-              ? `Settings still required: ${problems.join(", ")}.`
-              : "Settings ready: SRS-X, 4x20, hold/180/hard drop, multiplier, combo blocking and PC bonus 10.",
+            `Settings ready: SRS-X, 4x20, hold/180/hard drop, multiplier, combo blocking and PC bonus 10. ${returned ? "Host returned." : "Host return was not confirmed; check the room host."}`,
           );
         } catch (error: any) {
           await notice(
             "setup",
-            `Settings could not be applied: ${error.message}. Give the bot host and retry !setup.`,
+            `Setup or host return failed: ${error.message}. Check the room host and retry !setup.`,
           );
         } finally {
           applyingSettings = false;
@@ -313,29 +344,11 @@ export async function runRoomWorker(
     // Subscribe to raw replay streams without replaying every opponent engine.
     on("game.ready", (data: any) => {
       scopes.clear();
-      if (data.isNew) {
-        replayBytes = 0;
-        replayDisabled = false;
-      }
-      if (replayDisabled) return;
       for (const player of data.players)
         if (player.userid !== client.user.id) {
           scopes.add(player.gameid);
           client.emit("game.scope.start", player.gameid);
         }
-    });
-    on("game.replay", (data: any) => {
-      if (replayDisabled) return;
-      replayBytes += Buffer.byteLength(JSON.stringify(data.frames));
-      if (replayBytes > options.replays.limits.maxFileBytes * 0.75) {
-        saveReplay(true);
-        replayDisabled = true;
-        stopScopes();
-        room.replay = null;
-        console.warn(
-          `[Worker-${roomid}] Replay recording stopped at per-match size limit.`,
-        );
-      }
     });
     on("client.game.end", () => {
       saveReplay(false);

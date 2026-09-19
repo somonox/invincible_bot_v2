@@ -8,7 +8,7 @@ bot, with live incoming-packet timing supplied by the Bun client. See
 [the policy and prediction limits](HYBRID_POLICY.md).
 
 The service defaults to 20 room workers with a hard PPS cap of 5 and local
-`.ttrm` replay retention. See [required settings, commands and capacity](SERVICE_POLICY.md)
+`.ttrm` replay storage without automatic expiration or size/count limits. See [required settings, commands and capacity](SERVICE_POLICY.md)
 and `tetrio-bot/.env.example` for overrides.
 
 ## First run

@@ -25,6 +25,7 @@ function fixture(
     saved: [],
     wrappers: [],
     scopes: [],
+    transfers: [],
   };
   const room: any = {
     id: "test",
@@ -49,6 +50,11 @@ function fixture(
       room.options[c.index.replace("options.", "")] = c.value;
     client.emit("room.update", {});
   };
+  room.transferHost = async (id: string) => {
+    calls.transfers.push(id);
+    room.owner = id;
+    client.emit("room.update.host", id);
+  };
   room.chat = async (message: string) => {
     calls.chats.push(message);
   };
@@ -68,7 +74,6 @@ function fixture(
     defaultPps: 2,
     signal: shutdown.signal,
     replays: {
-      limits: { maxFileBytes: 100000 },
       save: async (_room: any, data: any, partial: any) => {
         calls.saved.push({ data, partial });
         return "test.ttrm";
@@ -140,6 +145,8 @@ test("settings change only through authorized setup with bot host permission", a
     await until(() => f.room.self.bracket === "player");
     assert.equal(f.room.options.kickset, "SRS-X");
     assert.equal(f.calls.updates.length, 1);
+    await until(() => f.calls.transfers.length === 1);
+    assert.equal(f.room.owner, "human");
     f.room.options.kickset = "SRS+";
     f.client.emit("room.update", {});
     await until(() => f.room.self.bracket === "spectator");
@@ -234,7 +241,7 @@ test("room leave before join settles cannot strand a worker slot", async () => {
     adapterPath: "unused",
     defaultPps: 2,
     signal: new AbortController().signal,
-    replays: { limits: { maxFileBytes: 1000 }, save: async () => "" } as any,
+    replays: { save: async () => "" } as any,
     createClient: async () => client,
   });
 });
@@ -306,4 +313,54 @@ test("spawn errors before adapter info are contained without evicting occupied r
   f.shutdown.abort();
   await f.promise;
   assert.ok(f.client.destroyed);
+});
+
+test("setup returns host to the previous owner even when they are not the inviter", async () => {
+  const f = fixture(false, { ...REQUIRED_SETTINGS, kickset: "SRS+" });
+  f.room.players.push({ _id: "host", bracket: "spectator" });
+  await until(() => f.calls.chats.length > 0);
+  f.room.owner = "bot";
+  f.client.emit("room.update.host", "bot");
+  await pause();
+  assert.equal(f.calls.updates.length, 0);
+  assert.equal(f.calls.transfers.length, 0);
+  chat(f, "host", "!setup");
+  await until(() => f.calls.transfers.length === 1);
+  assert.equal(f.room.options.kickset, "SRS-X");
+  assert.equal(f.room.owner, "host");
+  f.shutdown.abort();
+  await f.promise;
+});
+test("failed setup keeps host and allows retry without closing the worker", async () => {
+  const f = fixture(true, { ...REQUIRED_SETTINGS, kickset: "SRS+" });
+  await until(() => f.calls.chats.length > 0);
+  const update = f.room.update;
+  f.room.update = async () => {
+    throw new Error("settings rejected");
+  };
+  chat(f, "human", "!setup");
+  await pause();
+  assert.equal(f.calls.transfers.length, 0);
+  assert.equal(f.client.destroyed, false);
+  f.room.update = update;
+  chat(f, "human", "!setup");
+  await until(() => f.calls.transfers.length === 1);
+  f.shutdown.abort();
+  await f.promise;
+});
+test("large replay streams stay attached through match end", async () => {
+  const f = fixture();
+  await until(() => f.calls.chats.length > 0);
+  const manager = { export: () => ({ version: 1, replay: { rounds: [[]] } }) };
+  f.room.replay = manager;
+  f.client.emit("game.replay", {
+    frames: [{ data: "x".repeat(33 * 1024 * 1024) }],
+  });
+  assert.equal(f.room.replay, manager);
+  assert.equal(f.calls.saved.length, 0);
+  f.client.emit("client.game.end", {});
+  await until(() => f.calls.saved.length === 1);
+  assert.equal(f.calls.saved[0].partial, false);
+  f.shutdown.abort();
+  await f.promise;
 });

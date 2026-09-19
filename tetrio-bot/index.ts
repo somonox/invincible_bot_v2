@@ -12,22 +12,8 @@ const pool = new RoomPool(maxWorkers);
 installBotRuntime(BotWrapper);
 const replays = new ReplayStore(
   path.resolve((import.meta as any).dir, "../replays"),
-  {
-    maxFiles: envInt(process.env, "BOT_REPLAY_MAX_FILES", 1000, 1, 10000),
-    maxBytes:
-      envInt(process.env, "BOT_REPLAY_MAX_MB", 2048, 1, 16384) * 1024 * 1024,
-    maxAgeMs: envInt(process.env, "BOT_REPLAY_DAYS", 14, 1, 365) * 86400000,
-    maxFileBytes:
-      envInt(process.env, "BOT_REPLAY_FILE_MB", 32, 1, 128) * 1024 * 1024,
-  },
 );
-await replays.maintain();
-const maintenance = setInterval(() => {
-  void replays
-    .maintain()
-    .catch((error) => console.error("Replay cleanup:", error.message));
-}, 3600000);
-maintenance.unref();
+await replays.prepare();
 const shutdown = new AbortController();
 const workers = new Set<Promise<void>>();
 
@@ -126,10 +112,9 @@ let stopping = false;
 const stop = async () => {
   if (stopping) return;
   stopping = true;
-  clearInterval(maintenance);
   shutdown.abort();
   await Promise.allSettled([...workers]);
-  await replays.maintain().catch(() => {});
+  await replays.flush();
   await masterClient.destroy().catch(() => {});
 };
 process.once("SIGTERM", () => {
