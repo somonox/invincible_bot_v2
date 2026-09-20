@@ -250,11 +250,24 @@ export async function runRoomWorker(
       const parts = chat.content.trim().split(/\s+/);
       const command = parts[0].toLowerCase();
       if (
-        !["!pps", "!bot", "!leave", "!setup", "!expert", "!funny"].includes(
-          command,
-        )
+        ![
+          "!pps",
+          "!bot",
+          "!help",
+          "!leave",
+          "!setup",
+          "!expert",
+          "!funny",
+        ].includes(command)
       )
         return;
+      if (command === "!help") {
+        await notice(
+          "help",
+          "Commands: !help - this guide; !bot - status/mode; !pps [0.1-5] - show/set speed; !setup - apply SRS-X + 4x26, then return host (give bot host first); !expert [on|off] - combos; !funny [on|off] - B2B with survival priority; !leave - leave room. No on/off toggles a mode. Enabling one disables the other; turning the active mode off restores Normal (PC/attack). Controls: host/inviter only. Anyone can use !help and !bot.",
+        );
+        return;
+      }
       if (command === "!bot") {
         const problems = roomProblemDetails(room.options ?? {});
         const status = problems.length
@@ -553,7 +566,7 @@ export async function runRoomWorker(
     await reconcile();
     await notice(
       "welcome",
-      "Bot connected: SRS-X required, PPS limit 5. Give the bot host and use !setup for required settings. Normal mode by default; !expert for combos, !funny for B2B. Matches with this bot are saved as replays. !bot for help. For bug reports or suggestions, please DM a6a6_.",
+      "Bot connected: SRS-X required, PPS limit 5. Give the bot host and use !setup for required settings. Normal mode by default; !expert for combos, !funny for B2B. Matches with this bot are saved as replays. !help for commands, !bot for status. For bug reports or suggestions, please DM a6a6_.",
     );
     await left;
   } catch (error: any) {

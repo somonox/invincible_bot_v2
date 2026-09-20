@@ -21,6 +21,8 @@ variants, remain approximations described in [rule limitations](TETRIO_RULES.md)
 
 ## Room commands and capacity
 
+- `!help` lists commands, mode behavior and control permissions in English.
+  Anyone in the room can use it. `!bot` reports the current status and mode.
 - `!funny` toggles **Funny** mode; `!funny on` / `!funny off` explicitly set it.
   It favors B2B preservation and growth through eligible spin clears / tetrises,
   permitting non-clearing setup moves. Safety comes first: field height, buried
