@@ -82,3 +82,56 @@ fn funny_can_break_b2b_to_avoid_receiving_ready_garbage() {
         HybridMode::FunnyB2b { defending: true }
     ));
 }
+
+#[test]
+fn funny_lowers_a_tall_field_even_when_it_breaks_b2b() {
+    for height in [20, 26] {
+        let mut state = position(&vec![3; height - 6], Piece::O, Piece::O);
+        state.board.spawn_height = height as i32;
+        let plan =
+            find_funny_move(&state, None, Evaluator::Static(&Weights::default()), 6).unwrap();
+        let next = get_all_next_states(&state)
+            .into_iter()
+            .find(|(_, m, h)| (*m, *h) == plan.choice)
+            .unwrap()
+            .0;
+        assert!(!next.game_over);
+        assert_eq!(next.lines_cleared, 2);
+        assert!(!next.b2b);
+        assert!(next.board.highest_row() < state.board.highest_row());
+    }
+}
+
+#[test]
+fn funny_keeps_b2b_while_lowering_a_tall_tetris_well() {
+    let state = position(&[7; 22], Piece::I, Piece::O);
+    let plan = find_funny_move(&state, None, Evaluator::Static(&Weights::default()), 6).unwrap();
+    let next = get_all_next_states(&state)
+        .into_iter()
+        .find(|(_, m, h)| (*m, *h) == plan.choice)
+        .unwrap()
+        .0;
+    assert_eq!(next.lines_cleared, 4);
+    assert_eq!(next.b2b_level, 21);
+    assert_eq!(next.board.highest_row(), 18);
+}
+
+#[test]
+fn funny_reserves_headroom_for_garbage_that_has_not_arrived() {
+    use four_wide_bot::engine::state::GarbagePacket;
+    let mut state = position(&[3; 14], Piece::O, Piece::O);
+    state.garbage_packets = Some(vec![GarbagePacket {
+        amount: 6,
+        ready_in: 600,
+    }]);
+    state.sync_garbage_totals();
+    let plan = find_funny_move(&state, None, Evaluator::Static(&Weights::default()), 1).unwrap();
+    let next = get_all_next_states(&state)
+        .into_iter()
+        .find(|(_, m, h)| (*m, *h) == plan.choice)
+        .unwrap()
+        .0;
+    assert_eq!(next.last_received_garbage, 0);
+    assert_eq!(next.lines_cleared, 2);
+    assert!(next.last_canceled_garbage > 0);
+}

@@ -23,10 +23,15 @@ variants, remain approximations described in [rule limitations](TETRIO_RULES.md)
 
 - `!funny` toggles **Funny** mode; `!funny on` / `!funny off` explicitly set it.
   It favors B2B preservation and growth through eligible spin clears / tetrises,
-  permitting non-clearing setup moves. Among equally safe paths, fewer B2B breaks
-  wins, then a higher final B2B level, attack and board quality. Combo and fixed
-  PC feature rewards do not drive this mode. Predicted garbage received remains
-  the first safety criterion, so emergency clears can break B2B.
+  permitting non-clearing setup moves. Safety comes first: field height, buried
+  holes (converted to recovery rows) and pending garbage (up to one rise cap)
+  reserve eight rows below the configured visible ceiling. Search minimizes
+  excess pressure throughout the path, then at its end, then received garbage.
+  Within that safe space, fewer B2B breaks wins, then a higher final B2B level,
+  board quality and attack. Dangerous stacking yields to ordinary clears even
+  without an opponent's attack; safe spin clears / tetrises still preserve B2B.
+  Combo and fixed PC feature rewards do not drive this mode. This is a bounded
+  preview heuristic, not a guarantee against topping out.
   Funny and Expert are mutually exclusive: enabling one disables the other;
   toggling the active mode off returns to Normal. Explicitly disabling an
   inactive mode leaves the current mode alone. Permissions, per-room lifetime,
@@ -108,3 +113,10 @@ lifecycle (including outgoing self and incoming opponent frames through the real
 SDK ReplayManager), concurrent writes and preservation beyond former retention limits. Worker tests use injected fake clients
 and never log into TETR.IO. `cargo test --locked --no-default-features --all-targets`
 covers the adapter protocol and existing search/rule regressions.
+
+`cargo run --release --no-default-features --example funny_bench -- 8 300`
+compares solo survival with fixed 7-bag seeds, five previews and a 4x26 field.
+The original B2B-first policy reached the 26-row ceiling after 38-74 placements
+on these eight seeds. With the headroom policy, all eight reached the 300-piece
+cap, with peak heights of 15-17 and longest B2B chains of 15-40. These are offline
+checks without opponent garbage, not a live-match survival guarantee.

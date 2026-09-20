@@ -14,6 +14,19 @@ use crate::rl::{
 
 const BEAM_WIDTH: usize = 64;
 
+/// Reserve maneuvering space below the visible ceiling. Buried holes consume
+/// recovery space too; incoming garbage reserves room before it actually rises.
+/// Zero means there is room to pursue B2B setups, not guaranteed survival.
+pub fn funny_survival_risk(state: &GameState) -> usize {
+    let board = &state.board;
+    let recovery_rows = (board.holes_count() as usize).div_ceil(board.width.max(1));
+    let pressure = board.highest_row()
+        + recovery_rows
+        + state.incoming_garbage().min(state.garbage_cap) as usize;
+    let safe_height = (board.spawn_height.max(0) as usize).saturating_sub(8);
+    pressure.saturating_sub(safe_height)
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Objective {
     PerfectClear,
@@ -75,6 +88,8 @@ struct Node {
     chain_open: bool,
     initial_chain: usize,
     b2b_breaks: usize,
+    funny_risk: usize,
+    peak_funny_risk: usize,
     clears: usize,
     perfect_clears: usize,
     quality: f32,
@@ -88,6 +103,17 @@ struct Node {
 
 impl Node {
     fn compare(&self, other: &Self, objective: Objective) -> Ordering {
+        if objective == Objective::FunnyB2b {
+            // Preserve headroom throughout the plan, including setup moves,
+            // before considering B2B continuity or growth.
+            let survival = other
+                .peak_funny_risk
+                .cmp(&self.peak_funny_risk)
+                .then(other.funny_risk.cmp(&self.funny_risk));
+            if survival != Ordering::Equal {
+                return survival;
+            }
+        }
         if matches!(
             objective,
             Objective::DefensePc
@@ -107,8 +133,8 @@ impl Node {
                 .b2b_breaks
                 .cmp(&self.b2b_breaks)
                 .then(self.state.b2b_level.cmp(&other.state.b2b_level))
-                .then(self.attack.cmp(&other.attack))
-                .then(self.quality.total_cmp(&other.quality));
+                .then(self.quality.total_cmp(&other.quality))
+                .then(self.attack.cmp(&other.attack));
         }
         if objective.is_attack() {
             // Compare damage over the SAME preview horizon. A later multiplied
@@ -518,7 +544,14 @@ fn search_with_root(
         let cleared = next.combo > 0;
         let quality = evaluator.score(&next, opponent, objective);
         let perfect_clears = usize::from(next.last_perfect_clear);
+        let funny_risk = if objective == Objective::FunnyB2b {
+            funny_survival_risk(&next)
+        } else {
+            0
+        };
         frontier.push(Node {
+            funny_risk,
+            peak_funny_risk: funny_risk,
             b2b_breaks: usize::from(state.b2b && !next.b2b),
             attack: next.last_attack,
             peak_attack: next.last_attack,
@@ -561,7 +594,14 @@ fn search_with_root(
                 let cleared = next.combo > 0;
                 let chain_open = node.chain_open && cleared;
                 let perfect_clears = node.perfect_clears + usize::from(next.last_perfect_clear);
+                let funny_risk = if objective == Objective::FunnyB2b {
+                    funny_survival_risk(&next)
+                } else {
+                    0
+                };
                 let mut candidate = Node {
+                    funny_risk,
+                    peak_funny_risk: node.peak_funny_risk.max(funny_risk),
                     b2b_breaks: node.b2b_breaks + usize::from(node.state.b2b && !next.b2b),
                     attack: node.attack + next.last_attack,
                     peak_attack: node.peak_attack.max(next.last_attack),
@@ -701,6 +741,8 @@ mod selection_tests {
         for all_tied in [false, true] {
             let nodes: Vec<Node> = (0..256)
                 .map(|i| Node {
+                    funny_risk: if all_tied { 0 } else { i as usize % 4 },
+                    peak_funny_risk: if all_tied { 0 } else { i as usize % 4 },
                     b2b_breaks: if all_tied { 0 } else { i as usize % 3 },
                     state: state.clone(),
                     first_move: Move::new(Piece::T, crate::engine::header::Rotation::North, i, 0),

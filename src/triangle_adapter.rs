@@ -34,7 +34,9 @@ use crate::engine::board::{Board, BOARD_HEIGHT};
 use crate::engine::header::{ComboMode, Move, Piece, SpinMode};
 use crate::engine::state::{GameState, GarbagePacket};
 use crate::rl::meta_agent::MetaPolicyNetwork;
-use crate::rl::search::{find_funny_move, find_hybrid_move_with_expert, Evaluator};
+use crate::rl::search::{
+    find_funny_move, find_hybrid_move_with_expert, funny_survival_risk, Evaluator,
+};
 
 /// Convert a piece symbol string ("T", "I", etc.) to our Piece enum.
 fn piece_from_str(s: &str) -> Option<Piece> {
@@ -362,6 +364,11 @@ fn main() {
                             candidates.retain(|(s, _, _)| !s.game_over);
                             candidates.sort_by_key(|(s, _, _)| {
                                 (
+                                    if funny_mode {
+                                        funny_survival_risk(s)
+                                    } else {
+                                        0
+                                    },
                                     s.last_received_garbage,
                                     funny_mode && game_state.b2b && !s.b2b,
                                     std::cmp::Reverse(if funny_mode { s.b2b_level } else { 0 }),
