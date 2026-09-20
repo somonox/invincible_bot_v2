@@ -7,6 +7,14 @@ paired turns, current combo display, SRS-X and spin settings are preserved.
 
 Every placement is planned again from the latest actual board and incoming queue:
 
+For the current small-residue combo policy, also see [the finite-state combo
+solver](COMBO_SOLVER.md). After the beam below, a covered compact field with no
+queued garbage and no selected PC uses the table solver's root move. The beam
+is re-run with that root fixed to report its attack diagnostics. Tall-field
+multiplier planning and incoming-queue defense keep the ranking below. The left
+GUI uses the table directly when eligible. Table decisions use the full visible
+preview independently of the beam-depth control.
+
 1. Keep the occupied-cell divisibility check: cells must be divisible by
    gcd(width, 4) to pursue PC. On a four-wide board, pieces and clears cannot
    change that remainder. Incoming garbage does not bypass this condition;

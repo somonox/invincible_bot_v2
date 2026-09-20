@@ -8,6 +8,7 @@ pub mod engine {
 }
 
 pub mod rl {
+    pub mod combo_solver;
     pub mod features;
     pub mod agent;
     pub mod meta_agent;

@@ -245,7 +245,7 @@ impl HybridMode {
                 "{} defense: cancel {canceled_next} next, receive {received} in preview",
                 if pc { "PC" } else { "Combo" }
             ),
-            Self::ComboMultiplier => "Combo: multiplier attack plan".into(),
+            Self::ComboMultiplier => "Combo: continuation / multiplier attack plan".into(),
         }
     }
 }
@@ -290,7 +290,27 @@ pub fn find_hybrid_move(
         (false, true) => Objective::AttackPc,
         (false, false) => Objective::AttackCombo,
     };
-    search(state, opponent, evaluator, depth, objective).map(|found| {
+    search(state, opponent, evaluator, depth, objective).map(|mut found| {
+        // Keep queued-garbage defense and an already selected PC. In a quiet
+        // combo phase, use the separate table solver's clearing continuation.
+        // Re-evaluate the chosen root through the existing attack simulator so
+        // the public attack/cancel/PC diagnostics describe the actual choice.
+        if !pressure && found.pc_depth.is_none() {
+            if let Some(plan) = crate::rl::combo_solver::choose(state) {
+                if plan.choice != found.choice {
+                    if let Some(restricted) = search_with_root(
+                        state,
+                        opponent,
+                        evaluator,
+                        depth,
+                        objective,
+                        Some(plan.choice),
+                    ) {
+                        found = restricted;
+                    }
+                }
+            }
+        }
         let mode = if pressure {
             HybridMode::GarbageDefense {
                 pc: allow_pc && found.pc_depth.is_some(),
@@ -330,6 +350,22 @@ pub fn find_best_move_for_objective(
     depth: usize,
     objective: Objective,
 ) -> Option<(Move, bool)> {
+    if objective == Objective::Combo {
+        if let Some(plan) = crate::rl::combo_solver::choose(state) {
+            return Some(plan.choice);
+        }
+    }
+    find_beam_move_for_objective(state, opponent, evaluator, depth, objective)
+}
+
+/// Original beam kept as a fallback and as a reproducible benchmark baseline.
+pub fn find_beam_move_for_objective(
+    state: &GameState,
+    opponent: Option<&GameState>,
+    evaluator: Evaluator<'_>,
+    depth: usize,
+    objective: Objective,
+) -> Option<(Move, bool)> {
     search(state, opponent, evaluator, depth, objective).map(|result| result.choice)
 }
 
@@ -339,6 +375,17 @@ fn search(
     evaluator: Evaluator<'_>,
     depth: usize,
     objective: Objective,
+) -> Option<SearchResult> {
+    search_with_root(state, opponent, evaluator, depth, objective, None)
+}
+
+fn search_with_root(
+    state: &GameState,
+    opponent: Option<&GameState>,
+    evaluator: Evaluator<'_>,
+    depth: usize,
+    objective: Objective,
+    root: Option<(Move, bool)>,
 ) -> Option<SearchResult> {
     if state.game_over || !state.has_known_current() {
         return None;
@@ -350,6 +397,9 @@ fn search(
     let horizon = depth.max(1).min(visible - reserve);
     let mut frontier = Vec::new();
     for (next, m, use_hold) in get_all_next_states(state) {
+        if root.is_some_and(|choice| choice != (m, use_hold)) {
+            continue;
+        }
         if next.game_over {
             continue;
         }

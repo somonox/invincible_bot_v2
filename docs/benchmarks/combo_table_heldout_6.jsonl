@@ -1,0 +1,2 @@
+{"cap":10000,"fallbacks":0,"games":100,"max":262,"mean":20.32,"mean_ms":7.279972795497198,"median":14,"min":0,"mode":"beam","p99_ms":14.0785,"reached_cap":0,"residue":6,"seed_offset":1000}
+{"cap":10000,"fallbacks":534,"games":100,"max":10000,"mean":1394.66,"mean_ms":0.05610150395872878,"median":505,"min":0,"mode":"table","p99_ms":0.1396,"reached_cap":1,"residue":6,"seed_offset":1000}

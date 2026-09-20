@@ -13,6 +13,7 @@ pub mod engine {
 }
 
 pub mod rl {
+    pub mod combo_solver;
     pub mod agent;
     pub mod features;
     pub mod meta_agent;
@@ -758,7 +759,7 @@ impl eframe::App for BattleApp {
                 "Active turn: {}-ply for both bots",
                 self.active_depth
             ));
-            ui.label("Next turn uses the selected depth, limited to both previews.");
+            ui.label("Beam depth applies next turn; the combo table uses the full preview.");
             ui.label(if self.pair_rx.is_some() {
                 "Waiting for both searches..."
             } else if self.pair_plan.is_some() {
