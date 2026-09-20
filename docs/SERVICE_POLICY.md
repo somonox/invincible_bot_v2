@@ -23,8 +23,12 @@ variants, remain approximations described in [rule limitations](TETRIO_RULES.md)
 
 - Rooms start in **Normal** mode. `!expert` toggles **Expert** mode; `!expert on`
   and `!expert off` explicitly set it. Only the room host or original inviter
-  can change it. Expert enables the finite-state long-combo solver in eligible
-  quiet combo fields; PC selection, garbage defense and PPS limits stay intact.
+  can change it. Expert prioritizes uninterrupted clears using the table when
+  available and combo-first beam search for setup, uncovered boards or incoming
+  garbage. It does not revert to PC/attack ranking when the table is unavailable.
+  Predicted garbage received is minimized before comparing chain length; PC and
+  B2B attack never outrank a longer equally safe chain. Normal keeps the PC/attack
+  policy. PPS limits stay intact.
   Changes apply at the next planning decision without interrupting current
   inputs. The setting is per room worker, survives subsequent rounds, and resets
   to Normal when the bot leaves/rejoins or the service restarts. `!bot` shows it.

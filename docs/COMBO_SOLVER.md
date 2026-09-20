@@ -51,19 +51,34 @@ Integration:
   the table-enabled Expert mode; `!expert on` / `!expert off` explicitly select
   it. The setting is scoped to the room worker and updates on the next decision.
   GUI policies retain their table-enabled behavior.
-- Right GUI / Expert online hybrid: keep an already selected PC and all queued-garbage
+- Expert online: always use a combo-first policy. Use the table when eligible;
+  otherwise minimize predicted received garbage, maximize the uninterrupted
+  clear chain, then further clears and board quality. No PC/B2B attack override.
+  Setup moves are allowed when no clearing continuation is available. Expert
+  board evaluation removes the generic fixed PC bonus.
+- Right GUI hybrid: keep an already selected PC and all queued-garbage
   defense. In a quiet combo phase, use the table's root move. Re-run the existing
   beam with that root fixed to obtain attack/cancel/PC diagnostics for that move.
-- A current board outside the table uses the original beam. In particular, the
+- A current board outside the table uses its mode's beam (combo-first for Expert,
+  original attack ranking for the GUI hybrid). In particular, the
   bot does **not** cash out a tall stack early just to enter the table: the
   multiplier investment regression remains intact.
-- Unsupported width/height, unknown current, longer-than-supported previews,
-  or a missing complete chain use the original beam. Spawn heights 20 and 26
+- Unsupported width/height, unknown current, or a missing complete chain use
+  the mode's beam. The SDK sends a raw queue of 14 or more pieces: take the first
+  five next pieces rather than rejecting the table. Expert fallback uses that
+  same five-piece preview and ignores the transport tail. Spawn heights 20 and 26
   are checked against real move generation with multiple spin modes.
 
 The GUI depth setting controls the beam, including hybrid diagnostics and
 fallbacks. The table policy always uses the entire supported visible preview.
 Its 128-placement offline horizon is separate from that setting.
+
+The initial online integration incorrectly rejected raw queues longer than five
+and treated Expert as an optional override on attack-first hybrid search. This
+could bypass the table throughout online play and still build B2B. Regression
+tests now send SDK-sized queues through the real adapter protocol, assert the
+table strategy is selected, and verify maximal clear chains with large PC/B2B
+bonuses, uncovered tall boards and incoming garbage.
 
 ## Infinite-chain analysis
 

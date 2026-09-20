@@ -27,7 +27,7 @@ fn expert_mode_is_explicit_and_refreshes_without_restarting_the_adapter() {
             } else {
                 json!({"expertMode":mode})
             };
-            writeln!(input,"{}",json!({"type":"state","board":[["G","G","G",null],["G","G","G",null]],"current":"T","hold":"I","queue":["O","S","Z","L","J"],"combo":4,"b2b":-1,"garbage":[],"data":data})).unwrap();
+            writeln!(input,"{}",json!({"type":"state","board":[["G","G","G",null],["G","G","G",null]],"current":"T","hold":"I","queue":["O","S","Z","L","J","I","I","I","I","I","I","I","I","I"],"combo":4,"b2b":-1,"garbage":[],"data":data})).unwrap();
             writeln!(input, "{}", json!({"type":"play"})).unwrap();
         }
     }
@@ -45,6 +45,10 @@ fn expert_mode_is_explicit_and_refreshes_without_restarting_the_adapter() {
         assert_eq!(m["keys"].as_array().unwrap().last().unwrap(), "hardDrop");
     }
     assert_eq!(moves[0]["keys"], moves[2]["keys"]);
+    assert_eq!(
+        moves[1]["data"]["strategy"],
+        "Expert combo: continuation table"
+    );
 }
 #[test]
 fn online_play_uses_queue_defense_and_refreshes_back_to_pc() {

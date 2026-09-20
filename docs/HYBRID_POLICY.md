@@ -16,7 +16,10 @@ GUI uses the table directly when eligible. Table decisions use the full visible
 preview independently of the beam-depth control.
 
 Online rooms now start in Normal mode, which keeps the original beam only.
-`!expert` toggles Expert mode to enable the table override above. Explicit
+`!expert` toggles a separate combo-first Expert policy: table when available,
+otherwise combo-first search even for tall boards, setup and incoming garbage.
+Received garbage takes precedence over chain length; PC/B2B damage does not.
+The GUI hybrid retains the table override above. Explicit
 `!expert on` / `!expert off` are also supported; `!bot` reports the current mode.
 This room command does not change the GUI policies.
 

@@ -293,7 +293,7 @@ export async function runRoomWorker(
         notices.delete("expert");
         await notice(
           "expert",
-          `Expert mode ${expertMode ? "ON: combo continuation solver enabled" : "OFF: normal strategy enabled"}. Applies from the next decision. PPS unchanged (maximum 5).`,
+          `Expert mode ${expertMode ? "ON: continuous combos prioritized" : "OFF: normal strategy enabled"}. Applies from the next decision. PPS unchanged (maximum 5).`,
         );
         return;
       }

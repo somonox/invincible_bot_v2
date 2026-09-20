@@ -188,6 +188,7 @@ fn main() {
     let verbose_moves = std::env::var("BOT_LOG_MOVES").is_ok_and(|value| value == "1");
     let mut configured = false;
     let mut last_state: Option<Value> = None;
+    let mut reported_expert_mode = None;
 
     // Main message loop
     for line in reader.lines() {
@@ -296,6 +297,17 @@ fn main() {
 
                     let search_start = std::time::Instant::now();
                     let expert_mode = state_msg["data"]["expertMode"].as_bool().unwrap_or(false);
+                    if reported_expert_mode != Some(expert_mode) {
+                        eprintln!(
+                            "[4wide-bot] Active policy: {}",
+                            if expert_mode {
+                                "Expert combo-first (table or clear-chain search)"
+                            } else {
+                                "Normal PC/attack"
+                            }
+                        );
+                        reported_expert_mode = Some(expert_mode);
+                    }
                     let result = find_hybrid_move_with_expert(
                         &game_state,
                         None,
@@ -338,6 +350,7 @@ fn main() {
                             candidates.sort_by_key(|(s, _, _)| {
                                 (
                                     s.last_received_garbage,
+                                    std::cmp::Reverse(expert_mode && s.combo > 0),
                                     std::cmp::Reverse(s.last_canceled_garbage),
                                     std::cmp::Reverse(s.last_perfect_clear),
                                     std::cmp::Reverse(s.combo > 0),

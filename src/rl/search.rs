@@ -18,6 +18,7 @@ const BEAM_WIDTH: usize = 64;
 pub enum Objective {
     PerfectClear,
     Combo,
+    ExpertCombo,
     AttackPc,
     AttackCombo,
     DefensePc,
@@ -46,10 +47,16 @@ impl Evaluator<'_> {
             // Combo length must not overwhelm a PC setup, even with trained weights.
             features.combo_reward = 0.0;
         }
-        match self {
+        let score = match self {
             Self::Static(weights) => features.dot_product(weights),
             Self::Meta(net) => features
                 .dot_product(&net.forward(&MetaPolicyNetwork::extract_inputs(state, opponent))),
+        };
+        // Do not reward emptying a combo field with the generic PC bonus.
+        if objective == Objective::ExpertCombo && features.height_max == 0.0 {
+            score - 150.0
+        } else {
+            score
         }
     }
 }
@@ -74,7 +81,10 @@ struct Node {
 
 impl Node {
     fn compare(&self, other: &Self, objective: Objective) -> Ordering {
-        if matches!(objective, Objective::DefensePc | Objective::DefenseCombo) {
+        if matches!(
+            objective,
+            Objective::DefensePc | Objective::DefenseCombo | Objective::ExpertCombo
+        ) {
             let safety = other.received.cmp(&self.received);
             if safety != Ordering::Equal {
                 return safety;
@@ -221,6 +231,10 @@ pub fn find_best_move(
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HybridMode {
+    ExpertCombo {
+        table: bool,
+        defending: bool,
+    },
     PerfectClear {
         placements: usize,
     },
@@ -235,6 +249,15 @@ pub enum HybridMode {
 impl HybridMode {
     pub fn label(self) -> String {
         match self {
+            Self::ExpertCombo { table, defending } => format!(
+                "Expert combo: {}{}",
+                if table {
+                    "continuation table"
+                } else {
+                    "clear-chain search"
+                },
+                if defending { " (garbage defense)" } else { "" }
+            ),
             Self::PerfectClear { placements } => format!("PC in {placements} placements"),
             Self::ComboResidue => "Combo: PC needs a change in garbage".into(),
             Self::GarbageDefense {
@@ -282,17 +305,49 @@ pub fn find_hybrid_move(
     evaluator: Evaluator<'_>,
     depth: usize,
 ) -> Option<HybridPlan> {
-    find_hybrid_move_with_expert(state, opponent, evaluator, depth, true)
+    find_hybrid_move_internal(state, opponent, evaluator, depth, true)
 }
 
-/// Online rooms explicitly opt into the continuation table with !expert.
-/// The existing GUI entry point retains its table-enabled behavior.
+/// Expert is a distinct combo-first policy, including setup and fallback.
+/// The existing GUI hybrid entry point keeps its PC/attack policy.
 pub fn find_hybrid_move_with_expert(
     state: &GameState,
     opponent: Option<&GameState>,
     evaluator: Evaluator<'_>,
     depth: usize,
     expert: bool,
+) -> Option<HybridPlan> {
+    if expert {
+        let mut visible = state.for_search();
+        visible.queue.truncate(5);
+        let table = crate::rl::combo_solver::choose(&visible);
+        return search_with_root(
+            &visible,
+            opponent,
+            evaluator,
+            depth,
+            Objective::ExpertCombo,
+            table.map(|p| p.choice),
+        )
+        .map(|found| HybridPlan {
+            choice: found.choice,
+            mode: HybridMode::ExpertCombo {
+                table: table.is_some(),
+                defending: state.incoming_garbage() > 0,
+            },
+            expected_attack: found.attack,
+            peak_attack: found.peak_attack,
+        });
+    }
+    find_hybrid_move_internal(state, opponent, evaluator, depth, false)
+}
+
+fn find_hybrid_move_internal(
+    state: &GameState,
+    opponent: Option<&GameState>,
+    evaluator: Evaluator<'_>,
+    depth: usize,
+    use_table: bool,
 ) -> Option<HybridPlan> {
     let allow_pc = state.pc_bonus > 0 && pc_residue_possible(state);
     let pressure = state.incoming_garbage() > 0;
@@ -307,7 +362,7 @@ pub fn find_hybrid_move_with_expert(
         // combo phase, use the separate table solver's clearing continuation.
         // Re-evaluate the chosen root through the existing attack simulator so
         // the public attack/cancel/PC diagnostics describe the actual choice.
-        if expert && !pressure && found.pc_depth.is_none() {
+        if use_table && !pressure && found.pc_depth.is_none() {
             if let Some(plan) = crate::rl::combo_solver::choose(state) {
                 if plan.choice != found.choice {
                     if let Some(restricted) = search_with_root(
@@ -617,6 +672,7 @@ mod selection_tests {
                 .collect();
             for objective in [
                 Objective::Combo,
+                Objective::ExpertCombo,
                 Objective::PerfectClear,
                 Objective::AttackPc,
                 Objective::AttackCombo,

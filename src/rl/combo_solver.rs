@@ -374,6 +374,11 @@ pub struct ComboPlan {
 /// by the offline long-horizon continuation table. No random future is sampled.
 /// Unsupported boards/rules/pressure are explicitly handed back to normal play.
 pub fn choose(state: &GameState) -> Option<ComboPlan> {
+    // The SDK sends its raw queue (usually >=14 pieces). Use only the five
+    // supported previews; a longer transport queue must not disable the table.
+    let mut visible = state.for_search();
+    visible.queue.truncate(5);
+    let state = &visible;
     if state.game_over
         || !state.has_known_current()
         || state.board.width != 4
@@ -383,7 +388,6 @@ pub fn choose(state: &GameState) -> Option<ComboPlan> {
             .garbage_packets
             .as_ref()
             .is_some_and(|ps| ps.iter().any(|p| p.amount > 0))
-        || state.queue.len() > 5
     {
         return None;
     }
@@ -438,6 +442,22 @@ pub fn choose(state: &GameState) -> Option<ComboPlan> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sdk_raw_queue_uses_five_previews_instead_of_disabling_the_solver() {
+        let mut state = GameState::from_triangle(
+            decode_board(0x77),
+            Piece::T,
+            Some(Piece::I),
+            vec![Piece::O, Piece::S, Piece::Z, Piece::L, Piece::J],
+            5,
+            false,
+            0,
+        );
+        let expected = choose(&state).unwrap().choice;
+        state.queue.extend([Piece::I; 16]);
+        assert_eq!(choose(&state).unwrap().choice, expected);
+    }
 
     #[test]
     fn generated_table_is_the_complete_reachable_graph() {
