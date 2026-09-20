@@ -245,7 +245,7 @@ impl HybridMode {
                 "{} defense: cancel {canceled_next} next, receive {received} in preview",
                 if pc { "PC" } else { "Combo" }
             ),
-            Self::ComboMultiplier => "Combo: continuation / multiplier attack plan".into(),
+            Self::ComboMultiplier => "Combo: multiplier attack plan".into(),
         }
     }
 }
@@ -282,6 +282,18 @@ pub fn find_hybrid_move(
     evaluator: Evaluator<'_>,
     depth: usize,
 ) -> Option<HybridPlan> {
+    find_hybrid_move_with_expert(state, opponent, evaluator, depth, true)
+}
+
+/// Online rooms explicitly opt into the continuation table with !expert.
+/// The existing GUI entry point retains its table-enabled behavior.
+pub fn find_hybrid_move_with_expert(
+    state: &GameState,
+    opponent: Option<&GameState>,
+    evaluator: Evaluator<'_>,
+    depth: usize,
+    expert: bool,
+) -> Option<HybridPlan> {
     let allow_pc = state.pc_bonus > 0 && pc_residue_possible(state);
     let pressure = state.incoming_garbage() > 0;
     let objective = match (pressure, allow_pc) {
@@ -295,7 +307,7 @@ pub fn find_hybrid_move(
         // combo phase, use the separate table solver's clearing continuation.
         // Re-evaluate the chosen root through the existing attack simulator so
         // the public attack/cancel/PC diagnostics describe the actual choice.
-        if !pressure && found.pc_depth.is_none() {
+        if expert && !pressure && found.pc_depth.is_none() {
             if let Some(plan) = crate::rl::combo_solver::choose(state) {
                 if plan.choice != found.choice {
                     if let Some(restricted) = search_with_root(
@@ -506,6 +518,56 @@ fn search_with_root(
 #[cfg(test)]
 mod selection_tests {
     use super::*;
+    #[test]
+    fn expert_switch_gates_the_table_without_changing_the_normal_beam() {
+        use crate::engine::{board::Board, header::ALL_PIECES};
+        let weights = Weights::default();
+        let mut differing = 0;
+        for current in ALL_PIECES {
+            for hold in ALL_PIECES {
+                let mut board = Board::new(4);
+                board.rows[..2].copy_from_slice(&[7, 7]);
+                let queue = (1..6)
+                    .map(|i| ALL_PIECES[(current as usize + i) % 7])
+                    .collect();
+                let state =
+                    GameState::from_triangle(board, current, Some(hold), queue, 5, false, 0);
+                let normal = find_hybrid_move_with_expert(
+                    &state,
+                    None,
+                    Evaluator::Static(&weights),
+                    6,
+                    false,
+                )
+                .unwrap();
+                let baseline = search(
+                    &state,
+                    None,
+                    Evaluator::Static(&weights),
+                    6,
+                    Objective::AttackCombo,
+                )
+                .unwrap();
+                assert_eq!(normal.choice, baseline.choice);
+                if let Some(table) = crate::rl::combo_solver::choose(&state) {
+                    let expert = find_hybrid_move_with_expert(
+                        &state,
+                        None,
+                        Evaluator::Static(&weights),
+                        6,
+                        true,
+                    )
+                    .unwrap();
+                    assert_eq!(expert.choice, table.choice);
+                    differing += usize::from(expert.choice != normal.choice);
+                }
+            }
+        }
+        assert!(
+            differing > 0,
+            "fixture must distinguish table and beam choices"
+        );
+    }
     fn reference(nodes: &mut Vec<Node>, width: usize, objective: Objective) {
         nodes.sort_by(|a, b| b.compare(a, objective));
         if !objective.is_attack() || nodes.len() <= width {

@@ -31,6 +31,7 @@ export async function runRoomWorker(
     faulted = false,
     roomPps = options.defaultPps;
   let applyingSettings = false;
+  let expertMode = false;
   let lastStatus = "";
   let pauseReason = "";
   let finish!: () => void;
@@ -247,7 +248,8 @@ export async function runRoomWorker(
       if (chat.system || chat.user._id === client.user.id) return;
       const parts = chat.content.trim().split(/\s+/);
       const command = parts[0].toLowerCase();
-      if (!["!pps", "!bot", "!leave", "!setup"].includes(command)) return;
+      if (!["!pps", "!bot", "!leave", "!setup", "!expert"].includes(command))
+        return;
       if (command === "!bot") {
         const problems = roomProblemDetails(room.options ?? {});
         const status = problems.length
@@ -259,7 +261,7 @@ export async function runRoomWorker(
               : "Ready; waiting for the next round.";
         await notice(
           "status",
-          `4wide bot: ${status} SRS-X, PPS ${roomPps}/5. Matches are saved as .ttrm replays. !setup applies required settings and returns host (bot needs host). !pps <0.1-5>, !leave (host/inviter).`,
+          `4wide bot: ${status} Mode: ${expertMode ? "Expert" : "Normal"}. SRS-X, PPS ${roomPps}/5. Matches are saved as .ttrm replays. !setup applies required settings and returns host (bot needs host). !expert [on|off] toggles the combo solver. !pps <0.1-5>, !leave (host/inviter).`,
         );
         return;
       }
@@ -271,6 +273,27 @@ export async function runRoomWorker(
         await notice(
           "permission",
           "Only the room host or bot inviter can use control commands.",
+        );
+        return;
+      }
+      if (command === "!expert") {
+        const argument = parts[1]?.toLowerCase();
+        if (
+          parts.length > 2 ||
+          (argument !== undefined && argument !== "on" && argument !== "off")
+        ) {
+          await notice(
+            "expert-usage",
+            "Use !expert to toggle, or !expert on / !expert off.",
+          );
+          return;
+        }
+        expertMode = argument === undefined ? !expertMode : argument === "on";
+        if (round) round.wrapper.expertMode = expertMode;
+        notices.delete("expert");
+        await notice(
+          "expert",
+          `Expert mode ${expertMode ? "ON: combo continuation solver enabled" : "OFF: normal strategy enabled"}. Applies from the next decision. PPS unchanged (maximum 5).`,
         );
         return;
       }
@@ -424,6 +447,7 @@ export async function runRoomWorker(
       const wrapper =
         options.createWrapper?.(adapter, roomPps) ??
         new BotWrapper(adapter, { pps: roomPps });
+      wrapper.expertMode = expertMode;
       const current = {
         adapter,
         wrapper,
@@ -510,7 +534,7 @@ export async function runRoomWorker(
     await reconcile();
     await notice(
       "welcome",
-      "Bot connected: SRS-X required, PPS limit 5. Give the bot host and use !setup for required settings. Matches with this bot are saved as replays. !bot for help. For bug reports or suggestions, please DM a6a6_.",
+      "Bot connected: SRS-X required, PPS limit 5. Give the bot host and use !setup for required settings. Normal mode by default; !expert toggles Expert mode. Matches with this bot are saved as replays. !bot for help. For bug reports or suggestions, please DM a6a6_.",
     );
     await left;
   } catch (error: any) {

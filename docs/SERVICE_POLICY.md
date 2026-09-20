@@ -21,6 +21,15 @@ variants, remain approximations described in [rule limitations](TETRIO_RULES.md)
 
 ## Room commands and capacity
 
+- Rooms start in **Normal** mode. `!expert` toggles **Expert** mode; `!expert on`
+  and `!expert off` explicitly set it. Only the room host or original inviter
+  can change it. Expert enables the finite-state long-combo solver in eligible
+  quiet combo fields; PC selection, garbage defense and PPS limits stay intact.
+  Changes apply at the next planning decision without interrupting current
+  inputs. The setting is per room worker, survives subsequent rounds, and resets
+  to Normal when the bot leaves/rejoins or the service restarts. `!bot` shows it.
+  Each state snapshot carries a strict boolean `data.expertMode`; a missing or
+  invalid value means Normal, so older clients do not opt in accidentally.
 - `!pps <0.1-5>` sets speed; default 2. Invalid/partial numbers and values over 5
   are rejected. Runtime also clamps speed and spaces consecutive hard-drop inputs
   by at least 60/PPS frames, preventing catch-up bursts after lag or speed changes.

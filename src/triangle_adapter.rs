@@ -20,8 +20,8 @@ pub mod engine {
 }
 
 pub mod rl {
-    pub mod combo_solver;
     pub mod agent;
+    pub mod combo_solver;
     pub mod features;
     pub mod meta_agent;
     pub mod search;
@@ -34,7 +34,7 @@ use crate::engine::board::{Board, BOARD_HEIGHT};
 use crate::engine::header::{ComboMode, Move, Piece, SpinMode};
 use crate::engine::state::{GameState, GarbagePacket};
 use crate::rl::meta_agent::MetaPolicyNetwork;
-use crate::rl::search::{find_hybrid_move, Evaluator};
+use crate::rl::search::{find_hybrid_move_with_expert, Evaluator};
 
 /// Convert a piece symbol string ("T", "I", etc.) to our Piece enum.
 fn piece_from_str(s: &str) -> Option<Piece> {
@@ -295,11 +295,13 @@ fn main() {
                     }
 
                     let search_start = std::time::Instant::now();
-                    let result = find_hybrid_move(
+                    let expert_mode = state_msg["data"]["expertMode"].as_bool().unwrap_or(false);
+                    let result = find_hybrid_move_with_expert(
                         &game_state,
                         None,
                         Evaluator::Meta(&meta_net),
                         lookahead_depth,
+                        expert_mode,
                     );
                     let search_duration = search_start.elapsed();
 
@@ -371,6 +373,7 @@ fn main() {
                         "type": "move",
                         "keys": keys,
                         "data": {
+                            "expertMode": expert_mode,
                             "strategy": if used_plan { result.map(|p| p.mode.label()) } else { Some("Executable fallback".into()) },
                             "incoming": game_state.incoming_garbage(),
                             "expectedAttack": if used_plan { result.map(|p| p.expected_attack) } else { None },

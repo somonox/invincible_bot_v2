@@ -47,7 +47,11 @@ Integration:
 
 - GUI left / `Objective::Combo`: use the table whenever the current board is
   covered, no incoming garbage exists, and a complete visible clear chain exists.
-- Right GUI / online hybrid: keep an already selected PC and all queued-garbage
+- Online rooms start in Normal mode (the original beam). `!expert` toggles
+  the table-enabled Expert mode; `!expert on` / `!expert off` explicitly select
+  it. The setting is scoped to the room worker and updates on the next decision.
+  GUI policies retain their table-enabled behavior.
+- Right GUI / Expert online hybrid: keep an already selected PC and all queued-garbage
   defense. In a quiet combo phase, use the table's root move. Re-run the existing
   beam with that root fixed to obtain attack/cancel/PC diagnostics for that move.
 - A current board outside the table uses the original beam. In particular, the

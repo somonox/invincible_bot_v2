@@ -116,6 +116,51 @@ const engine = () => ({
 function chat(f: any, id: string, content: string) {
   f.client.emit("room.chat", { system: false, user: { _id: id }, content });
 }
+
+test("expert toggles are authorized, per-room, live and retained between rounds", async () => {
+  const f = fixture(false);
+  const other = fixture(false);
+  try {
+    await until(() => f.calls.chats.length > 0 && other.calls.chats.length > 0);
+    f.client.emit("client.game.round.start", [() => {}, engine()]);
+    other.client.emit("client.game.round.start", [() => {}, engine()]);
+    await until(
+      () => f.calls.wrappers.length === 1 && other.calls.wrappers.length === 1,
+    );
+    const first = f.calls.wrappers[0];
+    assert.equal(first.expertMode, false);
+    chat(f, "stranger", "!expert");
+    chat(f, "human", "!expert wrong");
+    chat(f, "human", "!expert on extra");
+    assert.equal(first.expertMode, false);
+    chat(f, "human", "!expert");
+    assert.equal(first.expertMode, true);
+    assert.equal(other.calls.wrappers[0].expertMode, false);
+    assert.equal(first.config.pps, 2);
+    assert.equal(first.stops, 0);
+    chat(f, "human", "!expert on");
+    assert.equal(first.expertMode, true);
+    chat(f, "stranger", "!bot");
+    await until(() =>
+      f.calls.chats.some((m: string) => m.includes("Mode: Expert")),
+    );
+    f.client.emit("client.game.over");
+    f.client.emit("client.game.round.start", [() => {}, engine()]);
+    await until(() => f.calls.wrappers.length === 2);
+    assert.equal(f.calls.wrappers[1].expertMode, true);
+    chat(f, "host", "!expert off");
+    assert.equal(f.calls.wrappers[1].expertMode, false);
+    chat(f, "host", "!expert");
+    assert.equal(f.calls.wrappers[1].expertMode, true);
+    chat(f, "host", "!expert");
+    assert.equal(f.calls.wrappers[1].expertMode, false);
+    assert.equal(f.calls.updates.length, 0);
+  } finally {
+    f.shutdown.abort();
+    other.shutdown.abort();
+    await Promise.all([f.promise, other.promise]);
+  }
+});
 test("settings change only through authorized setup with bot host permission", async () => {
   for (const host of [true, false]) {
     const f = fixture(host, { ...REQUIRED_SETTINGS, kickset: "SRS+" });

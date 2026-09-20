@@ -144,6 +144,7 @@ test("runtime clamps PPS even if wrapper config bypasses chat and sends fresh pa
       return 0;
     }
     config = { pps: 99 };
+    expertMode = false;
     adapter: any;
     nextFrame = 0;
     lastPieces = 0;
@@ -173,12 +174,21 @@ test("runtime clamps PPS even if wrapper config bypasses chat and sends fresh pa
   };
   const frames = await wrapper.tick(engine, []);
   assert.equal(wrapper.config.pps, 5);
+  assert.equal(captured.expertMode, false);
   assert.equal(captured.garbageContext.packets[0].amount, 4);
   assert.equal(frames.length, 2);
   const firstDrop = frames[0].frame + frames[0].data.subframe;
   engine.stats.pieces++;
   engine.frame++;
   await wrapper.tick(engine, []); // Observe the previous lock.
+  wrapper.expertMode = true;
   const next = await wrapper.tick(engine, []); // Catch-up scheduling must not burst.
+  assert.equal(captured.expertMode, true);
   assert.ok(next[0].frame + next[0].data.subframe - firstDrop >= 12);
+  engine.stats.pieces++;
+  engine.frame++;
+  await wrapper.tick(engine, []);
+  wrapper.expertMode = false;
+  await wrapper.tick(engine, [], { state: { expertMode: true } });
+  assert.equal(captured.expertMode, false);
 });

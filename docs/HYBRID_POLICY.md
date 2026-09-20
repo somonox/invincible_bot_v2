@@ -15,6 +15,11 @@ multiplier planning and incoming-queue defense keep the ranking below. The left
 GUI uses the table directly when eligible. Table decisions use the full visible
 preview independently of the beam-depth control.
 
+Online rooms now start in Normal mode, which keeps the original beam only.
+`!expert` toggles Expert mode to enable the table override above. Explicit
+`!expert on` / `!expert off` are also supported; `!bot` reports the current mode.
+This room command does not change the GUI policies.
+
 1. Keep the occupied-cell divisibility check: cells must be divisible by
    gcd(width, 4) to pursue PC. On a four-wide board, pieces and clears cannot
    change that remainder. Incoming garbage does not bypass this condition;
