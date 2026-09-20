@@ -161,6 +161,52 @@ test("expert toggles are authorized, per-room, live and retained between rounds"
     await Promise.all([f.promise, other.promise]);
   }
 });
+test("funny and expert are exclusive and funny survives rounds without affecting other rooms", async () => {
+  const f = fixture(false),
+    other = fixture(false);
+  try {
+    await until(() => f.calls.chats.length > 0 && other.calls.chats.length > 0);
+    f.client.emit("client.game.round.start", [() => {}, engine()]);
+    other.client.emit("client.game.round.start", [() => {}, engine()]);
+    const w = f.calls.wrappers[0];
+    assert.equal(w.funnyMode, false);
+    chat(f, "stranger", "!funny");
+    chat(f, "human", "!funny wat");
+    chat(f, "human", "!funny on extra");
+    assert.equal(w.funnyMode, false);
+    chat(f, "human", "!expert on");
+    chat(f, "human", "!funny");
+    assert.equal(w.funnyMode, true);
+    assert.equal(w.expertMode, false);
+    assert.equal(other.calls.wrappers[0].funnyMode, false);
+    chat(f, "human", "!funny on");
+    chat(f, "human", "!expert off");
+    assert.equal(w.funnyMode, true);
+    chat(f, "human", "!bot");
+    await until(() =>
+      f.calls.chats.some((m: string) => m.includes("Mode: Funny")),
+    );
+    f.client.emit("client.game.over");
+    f.client.emit("client.game.round.start", [() => {}, engine()]);
+    const next = f.calls.wrappers[1];
+    assert.equal(next.funnyMode, true);
+    chat(f, "host", "!expert");
+    assert.equal(next.expertMode, true);
+    assert.equal(next.funnyMode, false);
+    chat(f, "host", "!funny");
+    chat(f, "host", "!funny");
+    assert.equal(next.expertMode, false);
+    assert.equal(next.funnyMode, false);
+    assert.equal(next.config.pps, 2);
+    assert.equal(next.stops, 0);
+    assert.equal(f.calls.updates.length, 0);
+  } finally {
+    f.shutdown.abort();
+    other.shutdown.abort();
+    await Promise.all([f.promise, other.promise]);
+  }
+});
+
 test("settings change only through authorized setup with bot host permission", async () => {
   for (const host of [true, false]) {
     const f = fixture(host, { ...REQUIRED_SETTINGS, kickset: "SRS+" });

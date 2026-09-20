@@ -34,7 +34,7 @@ use crate::engine::board::{Board, BOARD_HEIGHT};
 use crate::engine::header::{ComboMode, Move, Piece, SpinMode};
 use crate::engine::state::{GameState, GarbagePacket};
 use crate::rl::meta_agent::MetaPolicyNetwork;
-use crate::rl::search::{find_hybrid_move_with_expert, Evaluator};
+use crate::rl::search::{find_funny_move, find_hybrid_move_with_expert, Evaluator};
 
 /// Convert a piece symbol string ("T", "I", etc.) to our Piece enum.
 fn piece_from_str(s: &str) -> Option<Piece> {
@@ -188,7 +188,7 @@ fn main() {
     let verbose_moves = std::env::var("BOT_LOG_MOVES").is_ok_and(|value| value == "1");
     let mut configured = false;
     let mut last_state: Option<Value> = None;
-    let mut reported_expert_mode = None;
+    let mut reported_mode = None;
 
     // Main message loop
     for line in reader.lines() {
@@ -296,25 +296,38 @@ fn main() {
                     }
 
                     let search_start = std::time::Instant::now();
-                    let expert_mode = state_msg["data"]["expertMode"].as_bool().unwrap_or(false);
-                    if reported_expert_mode != Some(expert_mode) {
+                    let funny_mode = state_msg["data"]["funnyMode"].as_bool().unwrap_or(false);
+                    let expert_mode =
+                        !funny_mode && state_msg["data"]["expertMode"].as_bool().unwrap_or(false);
+                    if reported_mode != Some((expert_mode, funny_mode)) {
                         eprintln!(
                             "[4wide-bot] Active policy: {}",
-                            if expert_mode {
+                            if funny_mode {
+                                "Funny B2B-first"
+                            } else if expert_mode {
                                 "Expert combo-first (table or clear-chain search)"
                             } else {
                                 "Normal PC/attack"
                             }
                         );
-                        reported_expert_mode = Some(expert_mode);
+                        reported_mode = Some((expert_mode, funny_mode));
                     }
-                    let result = find_hybrid_move_with_expert(
-                        &game_state,
-                        None,
-                        Evaluator::Meta(&meta_net),
-                        lookahead_depth,
-                        expert_mode,
-                    );
+                    let result = if funny_mode {
+                        find_funny_move(
+                            &game_state,
+                            None,
+                            Evaluator::Meta(&meta_net),
+                            lookahead_depth,
+                        )
+                    } else {
+                        find_hybrid_move_with_expert(
+                            &game_state,
+                            None,
+                            Evaluator::Meta(&meta_net),
+                            lookahead_depth,
+                            expert_mode,
+                        )
+                    };
                     let search_duration = search_start.elapsed();
 
                     let path_start = std::time::Instant::now();
@@ -350,6 +363,8 @@ fn main() {
                             candidates.sort_by_key(|(s, _, _)| {
                                 (
                                     s.last_received_garbage,
+                                    funny_mode && game_state.b2b && !s.b2b,
+                                    std::cmp::Reverse(if funny_mode { s.b2b_level } else { 0 }),
                                     std::cmp::Reverse(expert_mode && s.combo > 0),
                                     std::cmp::Reverse(s.last_canceled_garbage),
                                     std::cmp::Reverse(s.last_perfect_clear),
@@ -387,6 +402,7 @@ fn main() {
                         "keys": keys,
                         "data": {
                             "expertMode": expert_mode,
+                            "funnyMode": funny_mode,
                             "strategy": if used_plan { result.map(|p| p.mode.label()) } else { Some("Executable fallback".into()) },
                             "incoming": game_state.incoming_garbage(),
                             "expectedAttack": if used_plan { result.map(|p| p.expected_attack) } else { None },

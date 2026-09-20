@@ -145,6 +145,7 @@ test("runtime clamps PPS even if wrapper config bypasses chat and sends fresh pa
     }
     config = { pps: 99 };
     expertMode = false;
+    funnyMode = false;
     adapter: any;
     nextFrame = 0;
     lastPieces = 0;
@@ -175,6 +176,7 @@ test("runtime clamps PPS even if wrapper config bypasses chat and sends fresh pa
   const frames = await wrapper.tick(engine, []);
   assert.equal(wrapper.config.pps, 5);
   assert.equal(captured.expertMode, false);
+  assert.equal(captured.funnyMode, false);
   assert.equal(captured.garbageContext.packets[0].amount, 4);
   assert.equal(frames.length, 2);
   const firstDrop = frames[0].frame + frames[0].data.subframe;
@@ -190,5 +192,13 @@ test("runtime clamps PPS even if wrapper config bypasses chat and sends fresh pa
   await wrapper.tick(engine, []);
   wrapper.expertMode = false;
   await wrapper.tick(engine, [], { state: { expertMode: true } });
+  assert.equal(captured.expertMode, false);
+  engine.stats.pieces++;
+  engine.frame++;
+  await wrapper.tick(engine, []);
+  wrapper.funnyMode = true;
+  wrapper.expertMode = true;
+  await wrapper.tick(engine, [], { state: { funnyMode: false } });
+  assert.equal(captured.funnyMode, true);
   assert.equal(captured.expertMode, false);
 });

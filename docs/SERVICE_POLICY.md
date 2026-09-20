@@ -21,6 +21,19 @@ variants, remain approximations described in [rule limitations](TETRIO_RULES.md)
 
 ## Room commands and capacity
 
+- `!funny` toggles **Funny** mode; `!funny on` / `!funny off` explicitly set it.
+  It favors B2B preservation and growth through eligible spin clears / tetrises,
+  permitting non-clearing setup moves. Among equally safe paths, fewer B2B breaks
+  wins, then a higher final B2B level, attack and board quality. Combo and fixed
+  PC feature rewards do not drive this mode. Predicted garbage received remains
+  the first safety criterion, so emergency clears can break B2B.
+  Funny and Expert are mutually exclusive: enabling one disables the other;
+  toggling the active mode off returns to Normal. Explicitly disabling an
+  inactive mode leaves the current mode alone. Permissions, per-room lifetime,
+  next-decision updates and PPS cap are the same as Expert.
+  `data.funnyMode` is a strict boolean; if a client supplies both flags as true,
+  Funny takes precedence and the adapter reports Expert as false. The actual
+  executable fallback also prefers preserving/growing B2B after safety.
 - Rooms start in **Normal** mode. `!expert` toggles **Expert** mode; `!expert on`
   and `!expert off` explicitly set it. Only the room host or original inviter
   can change it. Expert prioritizes uninterrupted clears using the table when

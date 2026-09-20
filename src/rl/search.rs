@@ -19,6 +19,7 @@ pub enum Objective {
     PerfectClear,
     Combo,
     ExpertCombo,
+    FunnyB2b,
     AttackPc,
     AttackCombo,
     DefensePc,
@@ -43,7 +44,10 @@ pub enum Evaluator<'a> {
 impl Evaluator<'_> {
     fn score(&self, state: &GameState, opponent: Option<&GameState>, objective: Objective) -> f32 {
         let mut features = Features::evaluate_state(state, opponent);
-        if matches!(objective, Objective::PerfectClear | Objective::DefensePc) {
+        if matches!(
+            objective,
+            Objective::PerfectClear | Objective::DefensePc | Objective::FunnyB2b
+        ) {
             // Combo length must not overwhelm a PC setup, even with trained weights.
             features.combo_reward = 0.0;
         }
@@ -53,7 +57,9 @@ impl Evaluator<'_> {
                 .dot_product(&net.forward(&MetaPolicyNetwork::extract_inputs(state, opponent))),
         };
         // Do not reward emptying a combo field with the generic PC bonus.
-        if objective == Objective::ExpertCombo && features.height_max == 0.0 {
+        if matches!(objective, Objective::ExpertCombo | Objective::FunnyB2b)
+            && features.height_max == 0.0
+        {
             score - 150.0
         } else {
             score
@@ -68,6 +74,7 @@ struct Node {
     use_hold: bool,
     chain_open: bool,
     initial_chain: usize,
+    b2b_breaks: usize,
     clears: usize,
     perfect_clears: usize,
     quality: f32,
@@ -83,12 +90,25 @@ impl Node {
     fn compare(&self, other: &Self, objective: Objective) -> Ordering {
         if matches!(
             objective,
-            Objective::DefensePc | Objective::DefenseCombo | Objective::ExpertCombo
+            Objective::DefensePc
+                | Objective::DefenseCombo
+                | Objective::ExpertCombo
+                | Objective::FunnyB2b
         ) {
             let safety = other.received.cmp(&self.received);
             if safety != Ordering::Equal {
                 return safety;
             }
+        }
+        if objective == Objective::FunnyB2b {
+            // Zero-line setup preserves B2B, but only eligible clears grow it.
+            // A break followed by rebuilding must not masquerade as continuity.
+            return other
+                .b2b_breaks
+                .cmp(&self.b2b_breaks)
+                .then(self.state.b2b_level.cmp(&other.state.b2b_level))
+                .then(self.attack.cmp(&other.attack))
+                .then(self.quality.total_cmp(&other.quality));
         }
         if objective.is_attack() {
             // Compare damage over the SAME preview horizon. A later multiplied
@@ -231,6 +251,9 @@ pub fn find_best_move(
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HybridMode {
+    FunnyB2b {
+        defending: bool,
+    },
     ExpertCombo {
         table: bool,
         defending: bool,
@@ -249,6 +272,10 @@ pub enum HybridMode {
 impl HybridMode {
     pub fn label(self) -> String {
         match self {
+            Self::FunnyB2b { defending } => format!(
+                "Funny B2B: build and preserve{}",
+                if defending { " (garbage defense)" } else { "" }
+            ),
             Self::ExpertCombo { table, defending } => format!(
                 "Expert combo: {}{}",
                 if table {
@@ -340,6 +367,24 @@ pub fn find_hybrid_move_with_expert(
         });
     }
     find_hybrid_move_internal(state, opponent, evaluator, depth, false)
+}
+
+pub fn find_funny_move(
+    state: &GameState,
+    opponent: Option<&GameState>,
+    evaluator: Evaluator<'_>,
+    depth: usize,
+) -> Option<HybridPlan> {
+    let mut visible = state.for_search();
+    visible.queue.truncate(5);
+    search(&visible, opponent, evaluator, depth, Objective::FunnyB2b).map(|found| HybridPlan {
+        choice: found.choice,
+        mode: HybridMode::FunnyB2b {
+            defending: state.incoming_garbage() > 0,
+        },
+        expected_attack: found.attack,
+        peak_attack: found.peak_attack,
+    })
 }
 
 fn find_hybrid_move_internal(
@@ -474,6 +519,7 @@ fn search_with_root(
         let quality = evaluator.score(&next, opponent, objective);
         let perfect_clears = usize::from(next.last_perfect_clear);
         frontier.push(Node {
+            b2b_breaks: usize::from(state.b2b && !next.b2b),
             attack: next.last_attack,
             peak_attack: next.last_attack,
             received: next.last_received_garbage,
@@ -516,6 +562,7 @@ fn search_with_root(
                 let chain_open = node.chain_open && cleared;
                 let perfect_clears = node.perfect_clears + usize::from(next.last_perfect_clear);
                 let mut candidate = Node {
+                    b2b_breaks: node.b2b_breaks + usize::from(node.state.b2b && !next.b2b),
                     attack: node.attack + next.last_attack,
                     peak_attack: node.peak_attack.max(next.last_attack),
                     received: node.received + next.last_received_garbage,
@@ -654,6 +701,7 @@ mod selection_tests {
         for all_tied in [false, true] {
             let nodes: Vec<Node> = (0..256)
                 .map(|i| Node {
+                    b2b_breaks: if all_tied { 0 } else { i as usize % 3 },
                     state: state.clone(),
                     first_move: Move::new(Piece::T, crate::engine::header::Rotation::North, i, 0),
                     use_hold: false,
@@ -673,6 +721,7 @@ mod selection_tests {
             for objective in [
                 Objective::Combo,
                 Objective::ExpertCombo,
+                Objective::FunnyB2b,
                 Objective::PerfectClear,
                 Objective::AttackPc,
                 Objective::AttackCombo,

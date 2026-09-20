@@ -71,7 +71,8 @@ export function installBotRuntime(BotWrapper: any) {
         if (this.roundSignal.aborted) return [];
         this.adapter.update(engine, {
           ...fullData.state,
-          expertMode: this.expertMode === true,
+          expertMode: this.expertMode === true && this.funnyMode !== true,
+          funnyMode: this.funnyMode === true,
           garbageContext: garbageContext(
             engine,
             this.config.pps,
