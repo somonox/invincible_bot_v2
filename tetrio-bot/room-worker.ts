@@ -179,6 +179,7 @@ export async function runRoomWorker(
   options.signal.addEventListener("abort", abort, { once: true });
   try {
     if (options.signal.aborted) return;
+    const connectStarted = performance.now();
     const connect = (
       options.createClient ??
       (() =>
@@ -199,6 +200,9 @@ export async function runRoomWorker(
       "Worker connect",
       finish,
     );
+    console.log(
+      `[Worker-${roomid}] Connection ready after ${Math.round(performance.now() - connectStarted)} ms.`,
+    );
     const on = (event: string, handler: (data: any) => unknown) =>
       client.on(event, (data: any) => {
         if (closing) return;
@@ -217,6 +221,7 @@ export async function runRoomWorker(
     on("room.leave", finish);
     on("room.kick", finish);
     on("client.dead", finish);
+    const joinStarted = performance.now();
     room = await withTimeout(
       client.rooms.join(roomid),
       10000,
@@ -224,6 +229,9 @@ export async function runRoomWorker(
       finish,
     );
     if (closing) return;
+    console.log(
+      `[Worker-${roomid}] Joined after ${Math.round(performance.now() - joinStarted)} ms; total ${Math.round(performance.now() - connectStarted)} ms.`,
+    );
     on("room.update", reconcile);
     observedOwner = room.owner;
     on("room.update.host", (owner: string) => {

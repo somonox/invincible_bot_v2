@@ -11,6 +11,13 @@ The service defaults to 20 room workers with a hard PPS cap of 5 and local
 `.ttrm` replay storage without automatic expiration or size/count limits. See [required settings, commands and capacity](SERVICE_POLICY.md)
 and `tetrio-bot/.env.example` for overrides.
 
+The master prepares one authenticated, roomless spare connection for the next
+invitation, then replenishes it after assignment. Workers use the master's token
+in memory instead of repeating password authentication; each room still owns an
+independent connection. A cold start or simultaneous invitations can still wait
+for connection setup. Logs report spare readiness, worker connection time and
+room join time separately. The spare does not change the room/search capacity.
+
 ## First run
 
 Install a current stable Rust toolchain, Bun, git, a C compiler/linker and Linux

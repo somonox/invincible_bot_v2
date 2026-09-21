@@ -6,6 +6,7 @@ import { RoomPool, envInt } from "./service-policy";
 import { ReplayStore } from "./replay-store";
 import { installBotRuntime } from "./bot-runtime";
 import { runRoomWorker } from "./room-worker";
+import { ReadyClient } from "./ready-client";
 
 const maxWorkers = envInt(process.env, "BOT_MAX_WORKERS", 20, 1, 32);
 const pool = new RoomPool(maxWorkers);
@@ -40,6 +41,10 @@ const masterClient = await Client.create({
   username: process.env.BOT_USERNAME!,
   password: process.env.BOT_PASSWORD!,
 });
+// Reuse authentication in memory; workers still own independent connections.
+const readyClient = new ReadyClient(() =>
+  Client.create({ token: masterClient.token }),
+);
 
 console.log(
   `[4wide-bot] Master client logged in as: ${masterClient.user.username} (ID: ${masterClient.user.id})`,
@@ -102,6 +107,7 @@ const assignRoom = (invite: { roomid: string; sender: string }) => {
     defaultPps: 2,
     replays,
     signal: shutdown.signal,
+    createClient: () => readyClient.take(),
   }).finally(() => {
     pool.release(roomid, token);
     workers.delete(worker);
@@ -123,6 +129,7 @@ const stop = async () => {
   if (stopping) return;
   stopping = true;
   shutdown.abort();
+  await readyClient.close();
   await Promise.allSettled([...workers]);
   await replays.flush();
   await masterClient.destroy().catch(() => {});
