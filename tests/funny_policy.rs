@@ -7,7 +7,10 @@ use four_wide_bot::{
     rl::{
         agent::get_all_next_states,
         features::Weights,
-        search::{find_funny_move, find_hybrid_move_with_expert, Evaluator, HybridMode},
+        search::{
+            find_funny_move, find_funny_move_with_history, find_hybrid_move_with_expert, Evaluator,
+            FunnyHistory, HybridMode,
+        },
     },
 };
 
@@ -220,4 +223,69 @@ fn funny_builds_a_roof_then_recovers_it_with_executable_spins() {
         state.b2b_level >= 2,
         "the roof must pay back through actual B2B clears"
     );
+}
+
+#[test]
+fn aged_hole_free_walls_are_recovered_on_either_side() {
+    // A small B2B sacrifice must become preferable to repeatedly preserving a
+    // twelve-row wall. Mirror the board so this cannot just swap left/right.
+    for row in [3, 12] {
+        let mut state = position(&[row; 12], Piece::O, Piece::O);
+        state.pc_bonus = 5;
+        let mut history = FunnyHistory::default();
+        for pieces in 0..32 {
+            state.pieces_placed = pieces;
+            history.observe(&state);
+        }
+        assert!(history.unpaid() > 0, "solid shelves must carry debt too");
+        let plan = find_funny_move_with_history(
+            &state,
+            None,
+            Evaluator::Static(&Weights::default()),
+            1,
+            &mut history,
+        )
+        .unwrap();
+        let next = get_all_next_states(&state)
+            .into_iter()
+            .find(|(_, m, h)| (*m, *h) == plan.choice)
+            .unwrap()
+            .0;
+        assert_eq!(next.lines_cleared, 2);
+        assert_eq!(next.board.highest_row(), 10);
+        assert!(!next.b2b);
+    }
+}
+
+#[test]
+fn history_counts_placements_not_requests_and_repays_real_recovery() {
+    let mut state = position(&[3; 12], Piece::O, Piece::O);
+    let mut history = FunnyHistory::default();
+    history.observe(&state);
+    state.pieces_placed = 1;
+    history.observe(&state);
+    let debt = history.unpaid();
+    assert!(debt > 0);
+    for _ in 0..10 {
+        history.observe(&state);
+    }
+    assert_eq!(history.unpaid(), debt);
+    state.pieces_placed = 2;
+    state.combo = 1; // A spin/clear that leaves the wall is not recovery.
+    history.observe(&state);
+    assert!(history.unpaid() > debt);
+    state.board.rows.fill(0);
+    state.pieces_placed = 3;
+    history.observe(&state);
+    assert_eq!(history.unpaid(), 0);
+    state.board.rows[..12].fill(3);
+    state.pieces_placed = 4;
+    history.observe(&state);
+    assert!(history.unpaid() > 0);
+    state.pieces_placed = 0; // New round.
+    history.observe(&state);
+    assert_eq!(history.unpaid(), 0);
+    state.pieces_placed = 8; // Missing intermediate observations are not invented.
+    history.observe(&state);
+    assert_eq!(history.unpaid(), 0);
 }

@@ -35,7 +35,8 @@ use crate::engine::header::{ComboMode, Move, Piece, SpinMode};
 use crate::engine::state::{GameState, GarbagePacket};
 use crate::rl::meta_agent::MetaPolicyNetwork;
 use crate::rl::search::{
-    find_funny_move, find_hybrid_move_with_expert, funny_survival_risk, Evaluator,
+    find_funny_move_with_history, find_hybrid_move_with_expert, funny_survival_risk, Evaluator,
+    FunnyHistory,
 };
 
 /// Convert a piece symbol string ("T", "I", etc.) to our Piece enum.
@@ -95,6 +96,10 @@ fn build_state_from_protocol(msg: &Value, width: usize) -> GameState {
         garbage,
     );
     state.b2b_level = (b2b + 1).max(0) as u32;
+    state.pieces_placed = msg["data"]["piecesPlaced"]
+        .as_u64()
+        .unwrap_or(0)
+        .min(u32::MAX as u64) as u32;
     let context = &msg["data"]["garbageContext"];
     if let Some(packets) = context["packets"].as_array() {
         let parsed: Option<Vec<GarbagePacket>> = packets
@@ -191,6 +196,7 @@ fn main() {
     let mut configured = false;
     let mut last_state: Option<Value> = None;
     let mut reported_mode = None;
+    let mut funny_history = FunnyHistory::default();
 
     // Main message loop
     for line in reader.lines() {
@@ -216,6 +222,7 @@ fn main() {
 
         match msg_type {
             "config" => {
+                funny_history = FunnyHistory::default();
                 if msg["kicks"].as_str() != Some("SRS-X") || msg["boardWidth"].as_u64() != Some(4) {
                     eprintln!("[4wide-bot] Unsupported configuration: requires SRS-X and width 4.");
                     std::process::exit(2);
@@ -315,13 +322,15 @@ fn main() {
                         reported_mode = Some((expert_mode, funny_mode));
                     }
                     let result = if funny_mode {
-                        find_funny_move(
+                        find_funny_move_with_history(
                             &game_state,
                             None,
                             Evaluator::Meta(&meta_net),
                             lookahead_depth,
+                            &mut funny_history,
                         )
                     } else {
+                        funny_history = FunnyHistory::default();
                         find_hybrid_move_with_expert(
                             &game_state,
                             None,
@@ -382,17 +391,21 @@ fn main() {
                             candidates.sort_by(|(a, _, _), (b, _, _)| {
                                 if funny_mode {
                                     let safety = |s: &GameState| {
-                                        (
-                                            funny_survival_risk(s),
-                                            s.last_received_garbage,
-                                            game_state.b2b && !s.b2b,
-                                        )
+                                        (funny_survival_risk(s), s.last_received_garbage)
                                     };
                                     let order = safety(a).cmp(&safety(b)).then_with(|| {
                                         let evaluator = Evaluator::Meta(&meta_net);
                                         evaluator
-                                            .funny_position_value(b)
-                                            .total_cmp(&evaluator.funny_position_value(a))
+                                            .funny_next_value(
+                                                &game_state,
+                                                b,
+                                                funny_history.unpaid(),
+                                            )
+                                            .total_cmp(&evaluator.funny_next_value(
+                                                &game_state,
+                                                a,
+                                                funny_history.unpaid(),
+                                            ))
                                     });
                                     if !order.is_eq() {
                                         return order;
@@ -431,6 +444,7 @@ fn main() {
                         "data": {
                             "expertMode": expert_mode,
                             "funnyMode": funny_mode,
+                            "recoveryDebt": funny_history.unpaid(),
                             "strategy": if used_plan { result.map(|p| p.mode.label()) } else { Some("Executable fallback".into()) },
                             "incoming": game_state.incoming_garbage(),
                             "expectedAttack": if used_plan { result.map(|p| p.expected_attack) } else { None },

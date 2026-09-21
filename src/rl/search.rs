@@ -13,6 +13,7 @@ use crate::rl::{
 };
 
 const BEAM_WIDTH: usize = 64;
+const FUNNY_BREAK_COST: f64 = 72.0;
 
 /// Reserve maneuvering space below the visible ceiling. Buried holes consume
 /// recovery space too; incoming garbage reserves room before it actually rises.
@@ -55,7 +56,8 @@ pub enum Evaluator<'a> {
 }
 
 impl Evaluator<'_> {
-    /// The executable fallback uses the same B2B/field tradeoff as the beam.
+    /// Standalone field/B2B diagnostic without observed or path history.
+    /// Executable fallbacks use funny_next_value with their previous state.
     pub fn funny_position_value(&self, state: &GameState) -> f64 {
         let debt = funny_recovery_debt(state);
         funny_path_value(
@@ -64,6 +66,17 @@ impl Evaluator<'_> {
             debt,
             debt,
         )
+    }
+
+    /// One executable placement scored with the same recovery/break tradeoff
+    /// as the beam, including debt carried from confirmed real placements.
+    pub fn funny_next_value(&self, previous: &GameState, next: &GameState, carried: u32) -> f64 {
+        funny_path_value(
+            self.score(next, None, Objective::FunnyB2b),
+            u32::from(next.combo > 0 && next.b2b),
+            funny_recovery_debt(next),
+            remaining_recovery_cost(previous, next, carried),
+        ) - FUNNY_BREAK_COST * u32::from(previous.b2b && !next.b2b) as f64
     }
 
     fn score(&self, state: &GameState, opponent: Option<&GameState>, objective: Objective) -> f32 {
@@ -102,7 +115,52 @@ fn funny_path_value(quality: f32, b2b_level: u32, exposure: u32, unpaid: u32) ->
 /// A roof is allowed, but leaving holes covered for more placements costs time.
 /// Evaluate after line removal: a completed spin/PC repays its structure cost.
 fn funny_recovery_debt(state: &GameState) -> u32 {
-    state.board.holes_count() + state.board.cell_coveredness()
+    let heights = state.board.column_heights_array();
+    let heights = &heights[..state.board.width];
+    let floor = heights.iter().copied().min().unwrap_or(0);
+    // Four rows can be cashed out with one vertical I. Taller shelves carry
+    // additional recovery work even when they contain no covered holes.
+    let shelf: usize = heights.iter().map(|h| h.saturating_sub(floor + 4)).sum();
+    state.board.holes_count() + state.board.cell_coveredness() + shelf as u32
+}
+
+fn carried_recovery_cost(before: u32, after: u32, cleared: bool, carried: u32) -> u32 {
+    let repaid = if cleared && after < before {
+        (u64::from(carried) * u64::from(after) / u64::from(before)) as u32
+    } else {
+        carried
+    };
+    repaid.saturating_add(after).min(1_000_000)
+}
+
+/// Observed recovery debt, kept by the caller for one game/worker. Only a new
+/// confirmed placement advances it; repeated planning or garbage-only updates
+/// cannot manufacture elapsed turns. Missing/skipped history starts fresh.
+#[derive(Default, Debug)]
+pub struct FunnyHistory {
+    previous: Option<(u32, u32)>,
+    unpaid: u32,
+}
+
+impl FunnyHistory {
+    pub fn observe(&mut self, state: &GameState) {
+        let debt = funny_recovery_debt(state);
+        match self.previous {
+            Some((pieces, _)) if pieces == state.pieces_placed => return,
+            Some((pieces, before)) if pieces.checked_add(1) == Some(state.pieces_placed) => {
+                self.unpaid = carried_recovery_cost(before, debt, state.combo > 0, self.unpaid);
+            }
+            _ => self.unpaid = 0,
+        }
+        if debt == 0 {
+            self.unpaid = 0;
+        }
+        self.previous = Some((state.pieces_placed, debt));
+    }
+
+    pub fn unpaid(&self) -> u32 {
+        self.unpaid
+    }
 }
 
 fn remaining_recovery_cost(previous: &GameState, next: &GameState, carried: u32) -> u32 {
@@ -110,12 +168,7 @@ fn remaining_recovery_cost(previous: &GameState, next: &GameState, carried: u32)
     let after = funny_recovery_debt(next);
     // Repay only the fraction of obstruction actually removed. A cheap spin
     // that leaves the roof intact does not erase its accumulated setup cost.
-    let unpaid = if next.combo > 0 && after < before {
-        carried * after / before
-    } else {
-        carried
-    };
-    unpaid + after
+    carried_recovery_cost(before, after, next.combo > 0, carried)
 }
 
 #[derive(Clone)]
@@ -126,6 +179,7 @@ struct Node {
     chain_open: bool,
     initial_chain: usize,
     b2b_breaks: usize,
+    b2b_gains: u32,
     funny_risk: usize,
     peak_funny_risk: usize,
     recovery_exposure: u32,
@@ -168,27 +222,27 @@ impl Node {
         }
         if objective == Objective::FunnyB2b {
             // Zero-line setup preserves B2B, but only eligible clears grow it.
-            // A break followed by rebuilding must not masquerade as continuity.
-            return other
-                .b2b_breaks
-                .cmp(&self.b2b_breaks)
-                .then_with(|| {
-                    // A cheap spin that buries holes is not free B2B progress.
-                    // Trade one more eligible clear against the resulting field,
-                    // so setup for a sustainable next cycle can beat a quick spin.
-                    let value = |n: &Self| {
-                        funny_path_value(
-                            n.quality,
-                            n.state.b2b_level,
-                            n.recovery_exposure,
-                            n.unrecovered_exposure,
-                        )
-                    };
-                    value(self).total_cmp(&value(other))
-                })
-                .then(self.state.b2b_level.cmp(&other.state.b2b_level))
-                .then(self.quality.total_cmp(&other.quality))
-                .then(self.attack.cmp(&other.attack));
+            // Count realized eligible clears rather than the absolute old chain
+            // level. Charge a finite six-clear cost per break, allowing real
+            // recovery to beat indefinitely preserving an unusable structure.
+            return {
+                // A cheap spin that buries holes is not free B2B progress.
+                // Trade one more eligible clear against the resulting field,
+                // so setup for a sustainable next cycle can beat a quick spin.
+                let value = |n: &Self| {
+                    funny_path_value(
+                        n.quality,
+                        n.b2b_gains,
+                        n.recovery_exposure,
+                        n.unrecovered_exposure,
+                    ) - FUNNY_BREAK_COST * n.b2b_breaks as f64
+                };
+                value(self).total_cmp(&value(other))
+            }
+            .then(other.b2b_breaks.cmp(&self.b2b_breaks))
+            .then(self.state.b2b_level.cmp(&other.state.b2b_level))
+            .then(self.quality.total_cmp(&other.quality))
+            .then(self.attack.cmp(&other.attack));
         }
         if objective.is_attack() {
             // Compare damage over the SAME preview horizon. A later multiplied
@@ -455,9 +509,35 @@ pub fn find_funny_move(
     evaluator: Evaluator<'_>,
     depth: usize,
 ) -> Option<HybridPlan> {
+    find_funny_move_with_history(
+        state,
+        opponent,
+        evaluator,
+        depth,
+        &mut FunnyHistory::default(),
+    )
+}
+
+pub fn find_funny_move_with_history(
+    state: &GameState,
+    opponent: Option<&GameState>,
+    evaluator: Evaluator<'_>,
+    depth: usize,
+    history: &mut FunnyHistory,
+) -> Option<HybridPlan> {
+    history.observe(state);
     let mut visible = state.for_search();
     visible.queue.truncate(5);
-    search(&visible, opponent, evaluator, depth, Objective::FunnyB2b).map(|found| HybridPlan {
+    search_with_recovery(
+        &visible,
+        opponent,
+        evaluator,
+        depth,
+        Objective::FunnyB2b,
+        None,
+        history.unpaid,
+    )
+    .map(|found| HybridPlan {
         choice: found.choice,
         mode: HybridMode::FunnyB2b {
             defending: state.incoming_garbage() > 0,
@@ -579,6 +659,18 @@ fn search_with_root(
     objective: Objective,
     root: Option<(Move, bool)>,
 ) -> Option<SearchResult> {
+    search_with_recovery(state, opponent, evaluator, depth, objective, root, 0)
+}
+
+fn search_with_recovery(
+    state: &GameState,
+    opponent: Option<&GameState>,
+    evaluator: Evaluator<'_>,
+    depth: usize,
+    objective: Objective,
+    root: Option<(Move, bool)>,
+    carried: u32,
+) -> Option<SearchResult> {
     if state.game_over || !state.has_known_current() {
         return None;
     }
@@ -610,7 +702,7 @@ fn search_with_root(
         };
         frontier.push(Node {
             unrecovered_exposure: if objective == Objective::FunnyB2b {
-                funny_recovery_debt(&next)
+                remaining_recovery_cost(state, &next, carried)
             } else {
                 0
             },
@@ -622,6 +714,7 @@ fn search_with_root(
             funny_risk,
             peak_funny_risk: funny_risk,
             b2b_breaks: usize::from(state.b2b && !next.b2b),
+            b2b_gains: u32::from(cleared && next.b2b),
             attack: next.last_attack,
             peak_attack: next.last_attack,
             received: next.last_received_garbage,
@@ -683,6 +776,7 @@ fn search_with_root(
                     funny_risk,
                     peak_funny_risk: node.peak_funny_risk.max(funny_risk),
                     b2b_breaks: node.b2b_breaks + usize::from(node.state.b2b && !next.b2b),
+                    b2b_gains: node.b2b_gains + u32::from(cleared && next.b2b),
                     attack: node.attack + next.last_attack,
                     peak_attack: node.peak_attack.max(next.last_attack),
                     received: node.received + next.last_received_garbage,
@@ -885,6 +979,7 @@ mod selection_tests {
                     funny_risk: if all_tied { 0 } else { i as usize % 4 },
                     peak_funny_risk: if all_tied { 0 } else { i as usize % 4 },
                     b2b_breaks: if all_tied { 0 } else { i as usize % 3 },
+                    b2b_gains: if all_tied { 0 } else { i as u32 % 5 },
                     state: state.clone(),
                     first_move: Move::new(Piece::T, crate::engine::header::Rotation::North, i, 0),
                     use_hold: false,

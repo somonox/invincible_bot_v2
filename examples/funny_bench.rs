@@ -9,7 +9,7 @@ use four_wide_bot::{
     rl::{
         agent::get_all_next_states,
         meta_agent::MetaPolicyNetwork,
-        search::{find_funny_move, funny_survival_risk, Evaluator},
+        search::{find_funny_move_with_history, funny_survival_risk, Evaluator, FunnyHistory},
     },
 };
 use rand::{rngs::StdRng, seq::SliceRandom, SeedableRng};
@@ -58,6 +58,7 @@ fn main() {
             mut max_holes,
         ) = (0usize, 0usize, 0u64, 0usize, 0u32);
         let mut search_times = Vec::new();
+        let mut history = FunnyHistory::default();
         let start = Instant::now();
         while placed < cap {
             if garbage > 0 && placed > 0 && placed % 12 == 0 {
@@ -69,7 +70,8 @@ fn main() {
                 state.last_garbage_hole_x = placed / 12 % 4;
             }
             let search_start = Instant::now();
-            let plan = find_funny_move(&state, None, Evaluator::Meta(&net), 6);
+            let plan =
+                find_funny_move_with_history(&state, None, Evaluator::Meta(&net), 6, &mut history);
             search_times.push(search_start.elapsed().as_secs_f64() * 1000.0);
             let Some(plan) = plan else {
                 break;
@@ -88,13 +90,7 @@ fn main() {
                 let mut candidates = get_all_next_states(&state);
                 candidates.retain(|(s, _, _)| !s.game_over);
                 candidates.sort_by(|(a, _, _), (b, _, _)| {
-                    let safety = |s: &GameState| {
-                        (
-                            funny_survival_risk(s),
-                            s.last_received_garbage,
-                            state.b2b && !s.b2b,
-                        )
-                    };
+                    let safety = |s: &GameState| (funny_survival_risk(s), s.last_received_garbage);
                     let tie = |s: &GameState| {
                         (
                             s.b2b_level,
@@ -108,8 +104,8 @@ fn main() {
                         .cmp(&safety(b))
                         .then_with(|| {
                             evaluator
-                                .funny_position_value(b)
-                                .total_cmp(&evaluator.funny_position_value(a))
+                                .funny_next_value(&state, b, history.unpaid())
+                                .total_cmp(&evaluator.funny_next_value(&state, a, history.unpaid()))
                         })
                         .then_with(|| tie(b).cmp(&tie(a)))
                 });

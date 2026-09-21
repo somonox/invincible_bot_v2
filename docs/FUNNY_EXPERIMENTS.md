@@ -140,3 +140,100 @@ release passed the library, adapter, Funny, input-reachability and protocol
 tests. Independent ARM seeds `2 300 handheld 8 1300 executable` reached their
 caps with zero unreachable moves, mean decision times 10.76/10.56 ms and p99
 search times 14.06/13.90 ms. This is a single-worker test, not a load benchmark.
+
+## Persistent wall recovery (2026-09-21)
+
+Baseline `8db5655`. The earlier roof costs reset on every real decision and
+counted only buried holes. A hole-free wall therefore escaped the added
+recovery cost; B2B-break priority could also veto a useful ordinary clear
+regardless of field improvement. This update changes the recovery tradeoff
+without adding a left/right preference or banning intentional roofs.
+
+The recovery load is now holes + coveredness + tall-shelf load. For each
+column, tall-shelf load is `max(height - minimum_column_height - 4, 0)`.
+Four rows are the height one vertical I can clear. Taller one-sided walls
+carry extra work even with no holes. The feature is invariant under horizontal
+reflection; a short I well and the existing three-piece roof fixture remain
+allowed.
+
+`FunnyHistory` carries unpaid recovery cost between **observed placements**.
+The runtime sends `data.piecesPlaced` from `engine.stats.pieces`; the adapter
+advances history only when this count increments by exactly one. A clear that
+reduces recovery load repays debt proportionally, then adds the remaining
+load, just like the former within-search calculation. A spin that leaves the
+same load does not wipe the debt. Duplicate planning/garbage-only updates
+cannot add elapsed turns; counter jumps/restarts start a fresh observation.
+Clearing the load, leaving Funny mode or receiving a new configuration resets
+the applicable history. Each adapter/round owns its own instance, and the SDK
+creates a fresh adapter each round. Callers with no placement counter retain
+the stateless behavior rather than guessing elapsed moves. Arithmetic uses a
+wide multiply and a one-million cost cap.
+
+Search uses that observed debt at the root and propagates hypothetical
+repayment through the existing executable beam. Survival risk and garbage
+receipt remain higher-priority criteria. Below them, Funny now compares:
+
+```
+field_quality + 12 * eligible_B2B_clears_on_path
+  - 72 * B2B_breaks_on_path
+  - 0.125 * path_recovery_exposure
+  - 0.75 * unpaid_recovery_cost
+```
+
+Counting actual eligible clears avoids making a lost old chain level an
+unbounded extra penalty. A break costs the equivalent of six eligible clears,
+so mild tidying should still lose to a viable B2B continuation, while a
+substantial recovery can win. The executable fallback uses the same one-ply
+tradeoff. `find_funny_move_with_history` is used by the online adapter and
+the solo benchmark; `find_funny_move` remains a stateless convenience wrapper.
+Normal/Expert ranking is unchanged. No tie-order reversal was made: changing
+which side wins an exact tie would not address persistent overbuilding.
+
+Calibration compared break costs 36 and 72, then froze 72 before separate
+validation seeds. All runs use 4x26, PC bonus 5, SRS-X, five previews and
+executable input paths. Eight calibration games per variant, 250 pieces each:
+
+| Version | Attack | B2B clears | Breaks | Holes + coveredness sum | Height sum |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Baseline | 6561 | 845 | 54 | 6774 | 10118 |
+| Break cost 36 | 7135 | 904 | 86 | 2446 | 5393 |
+| Selected cost 72 | 7007 | 867 | 65 | 3220 | 6454 |
+
+Selected cost 72 reduced obstruction by 52.5% and height by 36.2%, with
+6.8% more generated attack and 2.6% more B2B clears. It still broke chains
+more often (54 to 65); this is a deliberate recovery tradeoff, not a claim
+of longer uninterrupted B2B. In the strongest calibration garbage profile,
+attack fell from 1597 to 1502, despite lower height. All variants survived
+their caps and produced zero unreachable plans.
+
+Calibration CLI tuples are `2 250 handheld 6 2200 executable`,
+`2 250 all 8 2300 executable`, `2 250 all 0 2400 executable`, and
+`2 250 handheld 24 2500 executable`, run with the release `funny_bench`
+example at the baseline and this version. Raw files are
+`benchmarks/funny-recovery-{before,cost36,after}-20260921.jsonl`.
+
+Regression coverage checks aged hole-free walls on both sides, preserved
+useful roof/spin recovery, ordinary-clear restraint, placement-count
+deduplication, repayment, skipped/reset counters, mode reset through the
+actual adapter protocol, and runtime forwarding of the SDK placement count.
+
+After freezing the cost, six separate validation games per version used
+`2 300 handheld 8 2600 executable`, `2 300 all 8 2700 executable` and
+`2 300 handheld 24 2800 executable`:
+
+| Version | Attack | B2B clears | Breaks | Holes + coveredness sum | Height sum |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Baseline | 5993 | 734 | 48 | 6479 | 9110 |
+| Selected cost 72 | 6541 | 859 | 66 | 3091 | 5480 |
+
+All games reached 300 pieces with no unreachable plans. In this held-out
+set, obstruction fell 52.3%, mean height fell 39.8%, generated attack rose
+9.1%, and eligible B2B clears rose 17.0%. Breaks also rose (48 to 66).
+These are finite solo simulations with scheduled garbage, not online win
+rates or a guarantee against every overbuild. Raw files are
+`benchmarks/funny-recovery-validation-{before,after}-20260921.jsonl`.
+
+Native ARM validation in a separate checkout passed 50 release Rust tests
+(library, adapter, Funny policy, protocol and reachable inputs) and all 30
+Bun tests. This validates the actual SDK-counter bridge as well as the Rust
+decision logic before the live service is updated.
