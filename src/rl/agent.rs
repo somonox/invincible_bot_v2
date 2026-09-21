@@ -1,5 +1,5 @@
 use crate::engine::header::Move;
-use crate::engine::movegen::generate_moves_with_rules;
+use crate::engine::movegen::{generate_input_moves, generate_moves_with_rules};
 use crate::engine::state::GameState;
 use crate::rl::features::{Features, Weights};
 use crate::rl::meta_agent::MetaPolicyNetwork;
@@ -193,6 +193,22 @@ impl TranspositionTable {
 /// Find all possible states immediately reachable, including hold options.
 /// Returns a vector of tuples: (resulting_game_state, chosen_move, hold_was_used)
 pub fn get_all_next_states(state: &GameState) -> Vec<(GameState, Move, bool)> {
+    next_states_with(state, generate_moves_with_rules)
+}
+
+/// Same state/hold/garbage simulation, restricted to executable adapter inputs.
+pub fn get_input_next_states(state: &GameState) -> Vec<(GameState, Move, bool)> {
+    next_states_with(state, generate_input_moves)
+}
+
+fn next_states_with(
+    state: &GameState,
+    generate: fn(
+        &crate::engine::board::Board,
+        crate::engine::header::Piece,
+        crate::engine::header::SpinMode,
+    ) -> Vec<Move>,
+) -> Vec<(GameState, Move, bool)> {
     if state.game_over || !state.has_known_current() {
         return Vec::new();
     }
@@ -200,7 +216,7 @@ pub fn get_all_next_states(state: &GameState) -> Vec<(GameState, Move, bool)> {
     let mut next_states = Vec::new();
 
     // 1. Check moves without hold
-    let moves = generate_moves_with_rules(&state.board, state.current, state.spin_mode);
+    let moves = generate(&state.board, state.current, state.spin_mode);
     for m in moves {
         let mut sim_state = state.clone();
         sim_state.do_move(m);
@@ -211,8 +227,7 @@ pub fn get_all_next_states(state: &GameState) -> Vec<(GameState, Move, bool)> {
     if !state.hold_used {
         let mut hold_sim = state.clone();
         if hold_sim.hold() {
-            let moves_hold =
-                generate_moves_with_rules(&hold_sim.board, hold_sim.current, hold_sim.spin_mode);
+            let moves_hold = generate(&hold_sim.board, hold_sim.current, hold_sim.spin_mode);
             for m in moves_hold {
                 let mut sim_state = hold_sim.clone();
                 sim_state.do_move(m);

@@ -219,6 +219,7 @@ struct MoveEntry {
     board: Board,
     piece: Piece,
     mode: SpinMode,
+    sonic: bool,
     moves: Vec<Move>,
 }
 struct MoveWorkspace {
@@ -244,6 +245,16 @@ thread_local! { static MOVE_WORKSPACE: RefCell<MoveWorkspace> = RefCell::new(Mov
 /// Bounded per-thread cache. Equality checks guard hash collisions; spin rules,
 /// full rows and width are part of the key. Combo/garbage cannot affect geometry.
 pub fn generate_moves_with_rules(board: &Board, piece: Piece, mode: SpinMode) -> Vec<Move> {
+    generate_cached(board, piece, mode, false)
+}
+
+/// Placements reachable by the adapter's actual keys, including sonic softDrop.
+/// Use at every search ply: a future midair tuck must not justify an earlier setup.
+pub fn generate_input_moves(board: &Board, piece: Piece, mode: SpinMode) -> Vec<Move> {
+    generate_cached(board, piece, mode, true)
+}
+
+fn generate_cached(board: &Board, piece: Piece, mode: SpinMode, sonic: bool) -> Vec<Move> {
     MOVE_WORKSPACE.with(|cell| {
         let mut work = cell.borrow_mut();
         let mut hash = std::collections::hash_map::DefaultHasher::new();
@@ -252,17 +263,23 @@ pub fn generate_moves_with_rules(board: &Board, piece: Piece, mode: SpinMode) ->
         board.spawn_height.hash(&mut hash);
         piece.hash(&mut hash);
         mode.hash(&mut hash);
+        sonic.hash(&mut hash);
         let slot = hash.finish() as usize % CACHE_SIZE;
         if let Some(entry) = &work.cache[slot] {
-            if entry.board == *board && entry.piece == piece && entry.mode == mode {
+            if entry.board == *board
+                && entry.piece == piece
+                && entry.mode == mode
+                && entry.sonic == sonic
+            {
                 return entry.moves.clone();
             }
         }
-        let moves = generate_uncached(board, piece, mode, &mut work);
+        let moves = generate_uncached(board, piece, mode, sonic, &mut work);
         work.cache[slot] = Some(MoveEntry {
             board: *board,
             piece,
             mode,
+            sonic,
             moves: moves.clone(),
         });
         moves
@@ -272,9 +289,11 @@ fn generate_uncached(
     board: &Board,
     piece: Piece,
     mode: SpinMode,
+    sonic: bool,
     work: &mut MoveWorkspace,
 ) -> Vec<Move> {
-    let Some(start) = spawn(board, piece, true) else {
+    // The sonic graph must start at exactly the same spawn as find_input_path.
+    let Some(start) = spawn(board, piece, !sonic) else {
         return Vec::new();
     };
     work.epoch = work.epoch.wrapping_add(1);
@@ -310,7 +329,7 @@ fn generate_uncached(
                 });
             }
         }
-        for (n, spin, _) in neighbors(board, piece, s, mode, false) {
+        for (n, spin, _) in neighbors(board, piece, s, mode, sonic) {
             if let Some(i) = index(n, spin) {
                 if visited[i] != epoch {
                     visited[i] = epoch;
@@ -369,10 +388,10 @@ mod workspace_tests {
         let mut work = MoveWorkspace::new();
         work.epoch = u16::MAX - 1;
         let b = Board::new(4);
-        let first = generate_uncached(&b, Piece::T, SpinMode::All, &mut work);
+        let first = generate_uncached(&b, Piece::T, SpinMode::All, false, &mut work);
         assert_eq!(
             first,
-            generate_uncached(&b, Piece::T, SpinMode::All, &mut work)
+            generate_uncached(&b, Piece::T, SpinMode::All, false, &mut work)
         );
         assert_eq!(work.epoch, 1);
     }
@@ -385,7 +404,7 @@ mod workspace_tests {
                     for rows in [[0, 0, 0], [3, 1, 0], [11, 9, 1]] {
                         let mut b = Board::new(width);
                         b.rows[..3].copy_from_slice(&rows);
-                        let expected = generate_uncached(&b, piece, mode, &mut work);
+                        let expected = generate_uncached(&b, piece, mode, false, &mut work);
                         for _ in 0..2 {
                             assert_eq!(generate_moves_with_rules(&b, piece, mode), expected);
                         }

@@ -40,6 +40,10 @@ variants, remain approximations described in [rule limitations](TETRIO_RULES.md)
   without an opponent's attack; safe spin clears / tetrises still preserve B2B.
   Combo and fixed PC feature rewards do not drive this mode. This is a bounded
   preview heuristic, not a guarantee against topping out.
+  Every Funny search layer uses placements reachable by the adapter's actual
+  inputs (sonic soft drop from the configured spawn). It cannot justify a setup
+  using a future tuck that requires stopping a drop in midair. This prevents
+  impossible plans from degrading into the adapter's one-move fallback.
   Funny and Expert are mutually exclusive: enabling one disables the other;
   toggling the active mode off returns to Normal. Explicitly disabling an
   inactive mode leaves the current mode alone. Permissions, per-room lifetime,

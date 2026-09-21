@@ -7,7 +7,7 @@ use crate::engine::{
     state::GameState,
 };
 use crate::rl::{
-    agent::get_all_next_states,
+    agent::{get_all_next_states, get_input_next_states},
     features::{Features, Weights},
     meta_agent::MetaPolicyNetwork,
 };
@@ -552,8 +552,13 @@ fn search_with_root(
     let visible = 1 + state.queue.len();
     let reserve = usize::from(state.hold.is_none() && !state.hold_used && visible > 1);
     let horizon = depth.max(1).min(visible - reserve);
+    let next_states = if objective == Objective::FunnyB2b {
+        get_input_next_states
+    } else {
+        get_all_next_states
+    };
     let mut frontier = Vec::new();
-    for (next, m, use_hold) in get_all_next_states(state) {
+    for (next, m, use_hold) in next_states(state) {
         if root.is_some_and(|choice| choice != (m, use_hold)) {
             continue;
         }
@@ -606,7 +611,7 @@ fn search_with_root(
         let mut next_layer: Vec<Node> = Vec::new();
         let mut seen: HashMap<Key, usize> = HashMap::new();
         for node in &frontier {
-            for (next, _, _) in get_all_next_states(&node.state) {
+            for (next, _, _) in next_states(&node.state) {
                 if next.game_over {
                     continue;
                 }

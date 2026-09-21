@@ -51,11 +51,15 @@ use the grounded rotation test; credit on non-rotation placements is approximate
 Multiplier, classic guideline, modern guideline and no-combo attack tables are
 selected from room config. `!setup` only changes width, height and kickset.
 
-The adapter Its pathfinder
+The adapter's pathfinder
 uses the same SRS-X rotation/spin helper, includes rotate180, and treats softDrop
 as a sonic drop instead of collapsing arbitrary one-cell paths. If a selected
 placement cannot be expressed by these inputs, it selects an executable fallback
 and logs the actual fallback move. Other kicksets remain unsupported.
+Funny now uses that same sonic movement graph throughout its beam, including
+future pieces and hold branches. Its generated placements start at the exact
+input spawn; the bounded move cache distinguishes sonic from one-cell movement.
+Normal/Expert and the GUI combo generator retain their existing movement graph.
 
 ## Scope and sources
 

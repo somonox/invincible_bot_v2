@@ -44,3 +44,42 @@ Next investigations should distinguish prediction errors from search pruning:
 reproduce real garbage arrival/cancellation from replays, and infer possible
 remaining 7-bag pieces from observed history before assigning continuation
 probabilities. These are proposed investigations, not implemented improvements.
+
+## Executable planning correction (after PC-B2B correction)
+
+Baseline `923f1b5`: the beam allowed one-cell drops, while the adapter could only
+send sonic soft drops. Live Funny logs repeatedly reported executable fallback
+placements. This also made future unreachable spins look like viable reasons to
+stack earlier. Funny now uses the sonic input graph at every depth, from the
+configured spawn. Evaluation weights, beam width and survival priorities stay
+the same. The geometry cache includes the movement model.
+
+`funny_bench` accepts `executable` after the seed offset to validate each chosen
+input path and simulate the adapter's existing one-ply fallback when necessary.
+This flag is required for comparing actual playable continuations with the old
+beam. These fixed-stream runs use the corrected PC-B2B rule, PC bonus 5 and 4x26.
+
+| Arguments | Version | Unreachable plans | B2B breaks | B2B clears | Attack |
+| --- | --- | --- | --- | --- | --- |
+| `4 300 handheld 6 500 executable` | Before | 5 | 12 | 582 | 4584 |
+| same | After | 0 | 16 | 581 | 4740 |
+| `4 300 all 8 600 executable` | Before | 5 | 23 | 508 | 4305 |
+| same | After | 0 | 23 | 493 | 4200 |
+
+All eight games per version reached the 300-piece cap. This fixes invalid
+planning, but does **not** establish improved B2B continuity or attack across
+scenarios: breaks and attack remain mixed. No win-rate claim follows from these
+solo simulations. Raw paired results are `benchmarks/funny-inputs-*.jsonl`.
+
+The seed-500 fixture captures an S full spin at south/x=1/y=5 on rows
+`[14,7,12,8,12,8,12,12]` (bottom first). The former generator includes it, but
+the input pathfinder cannot reach it. A regression checks its exclusion and
+Funny's executable choice at depths 1/3/6. Another checks all seven pieces at
+both spawn heights in three spin modes, replaying every generated input path,
+comparing reachable occupied cells/spin classes and alternating cache modes.
+
+Validation: `cargo test --all-targets` passed on Windows. ARM64 native/thin-LTO
+release passed 24 input-reachability, Funny, protocol and rule tests. Separate
+ARM seeds `2 300 handheld 8 700 executable` reached 600/600 placements with zero
+unreachable plans, mean total decision time 10.07/10.24 ms and p99 search time
+13.21/13.00 ms. These are single-worker timings, not a concurrency/load test.

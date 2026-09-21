@@ -3,11 +3,13 @@ use four_wide_bot::{
     engine::{
         board::Board,
         header::{SpinMode, ALL_PIECES},
+        movegen::find_input_path,
         state::{GameState, GarbagePacket},
     },
     rl::{
+        agent::get_all_next_states,
         meta_agent::MetaPolicyNetwork,
-        search::{find_funny_move, Evaluator},
+        search::{find_funny_move, funny_survival_risk, Evaluator},
     },
 };
 use rand::{rngs::StdRng, seq::SliceRandom, SeedableRng};
@@ -21,6 +23,7 @@ fn main() {
     let mode = args.get(3).map(String::as_str).unwrap_or("all");
     let garbage = args.get(4).and_then(|s| s.parse().ok()).unwrap_or(0u32);
     let offset = args.get(5).and_then(|s| s.parse().ok()).unwrap_or(0usize);
+    let executable = args.get(6).is_some_and(|s| s == "executable");
     let net = MetaPolicyNetwork::default();
     for seed in offset..offset + games {
         let mut rng = StdRng::seed_from_u64(20260920 + seed as u64);
@@ -45,6 +48,8 @@ fn main() {
         state.next_lock_frames = 12;
         let (mut index, mut placed, mut peak, mut max_b2b, mut breaks) = (0, 0, 0, 0, 0);
         let (mut b2b_clears, mut attack, mut canceled) = (0, 0, 0);
+        let mut unreachable_plans = 0;
+        let mut first_unreachable = None;
         let mut search_times = Vec::new();
         let start = Instant::now();
         while placed < cap {
@@ -62,14 +67,61 @@ fn main() {
             let Some(plan) = plan else {
                 break;
             };
+            let mut choice = plan.choice;
+            if executable && find_input_path(&state.board, choice.0, state.spin_mode).is_none() {
+                unreachable_plans += 1;
+                if first_unreachable.is_none() {
+                    first_unreachable = Some(
+                        json!({"rows": &state.board.rows[..state.board.highest_row()], "current": format!("{:?}", state.current), "hold": format!("{:?}", state.hold), "queue": format!("{:?}", state.queue), "move": format!("{:?}", choice), "placed": placed}),
+                    );
+                }
+                // Match the adapter's existing one-ply Funny fallback. Evaluating
+                // impossible placements as if executed overstates B2B continuity.
+                let evaluator = Evaluator::Meta(&net);
+                let mut candidates = get_all_next_states(&state);
+                candidates.retain(|(s, _, _)| !s.game_over);
+                candidates.sort_by(|(a, _, _), (b, _, _)| {
+                    let safety = |s: &GameState| {
+                        (
+                            funny_survival_risk(s),
+                            s.last_received_garbage,
+                            state.b2b && !s.b2b,
+                        )
+                    };
+                    let tie = |s: &GameState| {
+                        (
+                            s.b2b_level,
+                            s.last_canceled_garbage,
+                            s.last_perfect_clear,
+                            s.combo > 0,
+                            s.last_attack,
+                        )
+                    };
+                    safety(a)
+                        .cmp(&safety(b))
+                        .then_with(|| {
+                            evaluator
+                                .funny_position_value(b)
+                                .total_cmp(&evaluator.funny_position_value(a))
+                        })
+                        .then_with(|| tie(b).cmp(&tie(a)))
+                });
+                let Some((_, m, h)) = candidates
+                    .into_iter()
+                    .find(|(_, m, _)| find_input_path(&state.board, *m, state.spin_mode).is_some())
+                else {
+                    break;
+                };
+                choice = (m, h);
+            }
             let previous_b2b = state.b2b;
-            if plan.choice.1 {
+            if choice.1 {
                 if state.hold.is_none() {
                     index += 1;
                 }
                 assert!(state.hold());
             }
-            state.do_move(plan.choice.0);
+            state.do_move(choice.0);
             attack += state.last_attack;
             canceled += state.last_canceled_garbage;
             b2b_clears += usize::from(state.b2b && state.combo > 0);
@@ -92,7 +144,7 @@ fn main() {
         };
         println!(
             "{}",
-            json!({"seed":seed,"mode":mode,"garbage_per_12":garbage,"placed":placed,"cap":cap,"peak_height":peak,"max_b2b":max_b2b,"b2b_breaks":breaks,"b2b_clears":b2b_clears,"attack":attack,"canceled":canceled,"ms_per_move":start.elapsed().as_secs_f64()*1000.0/placed.max(1) as f64,"p95_search_ms":percentile(95),"p99_search_ms":percentile(99)})
+            json!({"seed":seed,"mode":mode,"garbage_per_12":garbage,"placed":placed,"cap":cap,"peak_height":peak,"max_b2b":max_b2b,"b2b_breaks":breaks,"b2b_clears":b2b_clears,"attack":attack,"canceled":canceled,"executable":executable,"unreachable_plans":unreachable_plans,"first_unreachable":first_unreachable,"ms_per_move":start.elapsed().as_secs_f64()*1000.0/placed.max(1) as f64,"p95_search_ms":percentile(95),"p99_search_ms":percentile(99)})
         );
     }
 }
