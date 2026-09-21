@@ -45,6 +45,7 @@ fn main() {
         state.next_lock_frames = 12;
         let (mut index, mut placed, mut peak, mut max_b2b, mut breaks) = (0, 0, 0, 0, 0);
         let (mut b2b_clears, mut attack, mut canceled) = (0, 0, 0);
+        let mut search_times = Vec::new();
         let start = Instant::now();
         while placed < cap {
             if garbage > 0 && placed > 0 && placed % 12 == 0 {
@@ -55,7 +56,10 @@ fn main() {
                 state.sync_garbage_totals();
                 state.last_garbage_hole_x = placed / 12 % 4;
             }
-            let Some(plan) = find_funny_move(&state, None, Evaluator::Meta(&net), 6) else {
+            let search_start = Instant::now();
+            let plan = find_funny_move(&state, None, Evaluator::Meta(&net), 6);
+            search_times.push(search_start.elapsed().as_secs_f64() * 1000.0);
+            let Some(plan) = plan else {
                 break;
             };
             let previous_b2b = state.b2b;
@@ -79,9 +83,16 @@ fn main() {
             }
             state.queue = stream[index + 1..index + 6].to_vec();
         }
+        search_times.sort_by(f64::total_cmp);
+        let percentile = |p: usize| {
+            search_times
+                .get(search_times.len().saturating_sub(1) * p / 100)
+                .copied()
+                .unwrap_or(0.0)
+        };
         println!(
             "{}",
-            json!({"seed":seed,"mode":mode,"garbage_per_12":garbage,"placed":placed,"cap":cap,"peak_height":peak,"max_b2b":max_b2b,"b2b_breaks":breaks,"b2b_clears":b2b_clears,"attack":attack,"canceled":canceled,"ms_per_move":start.elapsed().as_secs_f64()*1000.0/placed.max(1) as f64})
+            json!({"seed":seed,"mode":mode,"garbage_per_12":garbage,"placed":placed,"cap":cap,"peak_height":peak,"max_b2b":max_b2b,"b2b_breaks":breaks,"b2b_clears":b2b_clears,"attack":attack,"canceled":canceled,"ms_per_move":start.elapsed().as_secs_f64()*1000.0/placed.max(1) as f64,"p95_search_ms":percentile(95),"p99_search_ms":percentile(99)})
         );
     }
 }
