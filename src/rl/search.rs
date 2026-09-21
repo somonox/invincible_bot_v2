@@ -55,6 +55,14 @@ pub enum Evaluator<'a> {
 }
 
 impl Evaluator<'_> {
+    /// The executable fallback uses the same B2B/field tradeoff as the beam.
+    pub fn funny_position_value(&self, state: &GameState) -> f64 {
+        funny_value(
+            self.score(state, None, Objective::FunnyB2b),
+            state.b2b_level,
+        )
+    }
+
     fn score(&self, state: &GameState, opponent: Option<&GameState>, objective: Objective) -> f32 {
         let mut features = Features::evaluate_state(state, opponent);
         if matches!(
@@ -78,6 +86,10 @@ impl Evaluator<'_> {
             score
         }
     }
+}
+
+fn funny_value(quality: f32, b2b_level: u32) -> f64 {
+    quality as f64 + 12.0 * b2b_level as f64
 }
 
 #[derive(Clone)]
@@ -132,6 +144,13 @@ impl Node {
             return other
                 .b2b_breaks
                 .cmp(&self.b2b_breaks)
+                .then_with(|| {
+                    // A cheap spin that buries holes is not free B2B progress.
+                    // Trade one more eligible clear against the resulting field,
+                    // so setup for a sustainable next cycle can beat a quick spin.
+                    let value = |n: &Self| funny_value(n.quality, n.state.b2b_level);
+                    value(self).total_cmp(&value(other))
+                })
                 .then(self.state.b2b_level.cmp(&other.state.b2b_level))
                 .then(self.quality.total_cmp(&other.quality))
                 .then(self.attack.cmp(&other.attack));

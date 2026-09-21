@@ -135,3 +135,31 @@ fn funny_reserves_headroom_for_garbage_that_has_not_arrived() {
     assert_eq!(next.lines_cleared, 2);
     assert!(next.last_canceled_garbage > 0);
 }
+
+#[test]
+fn funny_prefers_a_clean_setup_over_a_spin_that_buries_more_holes() {
+    // An immediate handheld spin is possible here, but caps extra holes.
+    // Preserve the chain with an L setup instead of buying one more B2B
+    // clear at the cost of a worse field for the following pieces.
+    let mut state = position(&[14, 1, 9], Piece::L, Piece::S);
+    state.spin_mode = SpinMode::Handheld;
+    state.combo = 0;
+    let plan = find_funny_move(&state, None, Evaluator::Static(&Weights::default()), 1).unwrap();
+    let candidates = get_all_next_states(&state);
+    let selected = &candidates
+        .iter()
+        .find(|(_, m, h)| (*m, *h) == plan.choice)
+        .unwrap()
+        .0;
+    assert!(!selected.game_over && selected.b2b);
+    assert_eq!(selected.b2b_level, state.b2b_level);
+    assert_eq!(selected.board.holes_count(), 1);
+    let evaluator = Evaluator::Static(&Weights::default());
+    assert!(candidates.iter().any(|(next, _, _)| {
+        !next.game_over
+            && next.b2b_level > state.b2b_level
+            && next.board.holes_count() > selected.board.holes_count()
+            && four_wide_bot::rl::search::funny_survival_risk(next) == 0
+            && evaluator.funny_position_value(selected) > evaluator.funny_position_value(next)
+    }));
+}

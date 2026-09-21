@@ -362,7 +362,7 @@ fn main() {
                             );
                             let mut candidates = crate::rl::agent::get_all_next_states(&game_state);
                             candidates.retain(|(s, _, _)| !s.game_over);
-                            candidates.sort_by_key(|(s, _, _)| {
+                            let fallback_key = |s: &GameState| {
                                 (
                                     if funny_mode {
                                         funny_survival_risk(s)
@@ -378,6 +378,27 @@ fn main() {
                                     std::cmp::Reverse(s.combo > 0),
                                     std::cmp::Reverse(s.last_attack),
                                 )
+                            };
+                            candidates.sort_by(|(a, _, _), (b, _, _)| {
+                                if funny_mode {
+                                    let safety = |s: &GameState| {
+                                        (
+                                            funny_survival_risk(s),
+                                            s.last_received_garbage,
+                                            game_state.b2b && !s.b2b,
+                                        )
+                                    };
+                                    let order = safety(a).cmp(&safety(b)).then_with(|| {
+                                        let evaluator = Evaluator::Meta(&meta_net);
+                                        evaluator
+                                            .funny_position_value(b)
+                                            .total_cmp(&evaluator.funny_position_value(a))
+                                    });
+                                    if !order.is_eq() {
+                                        return order;
+                                    }
+                                }
+                                fallback_key(a).cmp(&fallback_key(b))
                             });
                             candidates
                                 .into_iter()

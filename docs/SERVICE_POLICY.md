@@ -29,8 +29,12 @@ variants, remain approximations described in [rule limitations](TETRIO_RULES.md)
   holes (converted to recovery rows) and pending garbage (up to one rise cap)
   reserve eight rows below the configured visible ceiling. Search minimizes
   excess pressure throughout the path, then at its end, then received garbage.
-  Within that safe space, fewer B2B breaks wins, then a higher final B2B level,
-  board quality and attack. Dangerous stacking yields to ordinary clears even
+  Within that safe space, fewer B2B breaks wins. Next, jointly score the final
+  board and B2B progress: board quality + 12 points per B2B level, with combo
+  and fixed PC rewards removed. One extra spin cannot outweigh arbitrarily bad
+  holes/coveredness; a clean non-clearing setup can win instead. Ties favor B2B
+  level, board quality and attack. The executable fallback uses this same tradeoff.
+  Dangerous stacking yields to ordinary clears even
   without an opponent's attack; safe spin clears / tetrises still preserve B2B.
   Combo and fixed PC feature rewards do not drive this mode. This is a bounded
   preview heuristic, not a guarantee against topping out.
@@ -116,9 +120,22 @@ SDK ReplayManager), concurrent writes and preservation beyond former retention l
 and never log into TETR.IO. `cargo test --locked --no-default-features --all-targets`
 covers the adapter protocol and existing search/rule regressions.
 
-`cargo run --release --no-default-features --example funny_bench -- 8 300`
-compares solo survival with fixed 7-bag seeds, five previews and a 4x26 field.
-The original B2B-first policy reached the 26-row ceiling after 38-74 placements
-on these eight seeds. With the headroom policy, all eight reached the 300-piece
-cap, with peak heights of 15-17 and longest B2B chains of 15-40. These are offline
-checks without opponent garbage, not a live-match survival guarantee.
+`cargo run --release --no-default-features --example funny_bench -- 8 300 handheld 0 0`
+compares fixed 7-bag streams with five previews, a 4x26 field and PC bonus 5.
+Arguments: games, piece cap, spin mode (`all` or `handheld`), incoming lines per
+12 placements, seed offset. Incoming packets mature after 36 simulated frames;
+placements take 12 frames. The garbage hole rotates deterministically.
+
+September 21 comparison against `429ec68` using the same updated benchmark:
+
+| Scenario | Total B2B breaks, before → after | Mean longest B2B, before → after | Total attack, before → after |
+| --- | --- | --- | --- |
+| Handheld, 8 × 300, no garbage, seeds 0-7 | 116 → 25 | 38.38 → 69.38 | 6903 → 8157 |
+| Handheld, 8 × 300, 4 incoming/12 pieces, seeds 0-7 | 133 → 25 | 35.12 → 70.38 | 6800 → 8121 |
+| Handheld, 4 × 600, 6 incoming/12 pieces, held-out seeds 100-103 | 160 → 34 | 34.00 → 60.25 | 6368 → 7737 |
+| All spins, 4 × 600, no garbage, held-out seeds 100-103 | 152 → 42 | 31.25 → 54.00 | 6292 → 8097 |
+
+Both policies reached every piece cap; neither exceeded height 17. Attack is
+the simulator's generated total, including canceled damage and its B2B surge
+approximation. These are offline comparisons, not measured live win rates or a
+guarantee of an infinite chain. The headroom safeguard is unchanged.
