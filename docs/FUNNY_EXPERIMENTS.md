@@ -1,5 +1,9 @@
 # Funny search experiments, 2026-09-21
 
+Historical results: these experiments predate the PC-B2B rule correction.
+Ordinary PCs were incorrectly counted as B2B breaks, so these results and
+candidate rankings must be rechecked before drawing current-policy conclusions.
+
 Baseline: `df4e3e5`. None of the experimental policies below was deployed.
 The current 64-node beam, field evaluation and survival policy remain in use.
 

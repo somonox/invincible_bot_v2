@@ -32,7 +32,13 @@ The GUI defaults to `All`, with selectable `All-Mini+` and `T-spins`:
 - T-spins: only the T corner test is credited.
 
 Full spin single/double/triple/quad base attack is 2/4/6/10. Mini single/double/
-triple is 0/1/2. Spins that clear lines maintain B2B, just like quads. B2B chaining
+triple is 0/1/2. Spins that clear lines maintain B2B, just like quads. Perfect
+clears also increment B2B once, matching the active room's `allclear_b2b=1`.
+A spin/quad PC increments once total, not twice. PC recognition happens before
+B2B and attack accounting, so ordinary single/double/triple PCs do not break
+the chain or release its charge. The PC attack bonus remains a separate addition;
+a zero attack bonus does not disable the B2B increment. Other PC-B2B increment
+settings are not modeled by this profile. B2B chaining
 uses the logarithmic formula, followed by multiplier combo scaling and integer
 flooring. The first eligible clear starts B2B without receiving a continuation
 bonus. Search and battle share this calculation. The GUI keeps its +10 PC bonus; online search reads the room PC bonus, including zero.

@@ -24,8 +24,10 @@ variants, remain approximations described in [rule limitations](TETRIO_RULES.md)
 - `!help` lists commands, mode behavior and control permissions in English.
   Anyone in the room can use it. `!bot` reports the current status and mode.
 - `!funny` toggles **Funny** mode; `!funny on` / `!funny off` explicitly set it.
-  It favors B2B preservation and growth through eligible spin clears / tetrises,
-  permitting non-clearing setup moves. Safety comes first: field height, buried
+  It favors B2B preservation and growth through eligible spin clears, tetrises
+  and perfect clears. A PC adds one B2B step, including ordinary 1-3 line PCs,
+  and is not counted twice when it is also a spin/quad. The mode allows
+  non-clearing setup moves. Safety comes first: field height, buried
   holes (converted to recovery rows) and pending garbage (up to one rise cap)
   reserve eight rows below the configured visible ceiling. Search minimizes
   excess pressure throughout the path, then at its end, then received garbage.
@@ -126,7 +128,9 @@ Arguments: games, piece cap, spin mode (`all` or `handheld`), incoming lines per
 12 placements, seed offset. Incoming packets mature after 36 simulated frames;
 placements take 12 frames. The garbage hole rotates deterministically.
 
-September 21 comparison against `429ec68` using the same updated benchmark:
+Historical September 21 comparison against `429ec68` using the same updated
+benchmark. These runs predate the PC-B2B correction and incorrectly treated
+ordinary PCs as B2B breaks; they do not establish current policy performance:
 
 | Scenario | Total B2B breaks, before → after | Mean longest B2B, before → after | Total attack, before → after |
 | --- | --- | --- | --- |

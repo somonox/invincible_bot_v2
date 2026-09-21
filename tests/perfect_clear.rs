@@ -1,7 +1,8 @@
 use four_wide_bot::engine::{
     board::Board,
-    header::{Move, Piece, ALL_PIECES},
+    header::{Move, Piece, Rotation, Spin, ALL_PIECES},
     movegen::generate_moves,
+    piece::get_piece_cells,
     state::GameState,
 };
 use four_wide_bot::rl::{
@@ -140,4 +141,58 @@ fn starting_empty_is_not_a_perfect_clear_event() {
     state.do_move(m);
     assert_eq!(state.perfect_clears, 0);
     assert!(!state.last_perfect_clear);
+    assert!(!state.b2b);
+}
+
+#[test]
+fn every_pc_adds_exactly_one_b2b_step_in_search_and_battle() {
+    for (piece, rotation, spin, lines) in [
+        (Piece::I, Rotation::North, Spin::None, 1),
+        (Piece::O, Rotation::North, Spin::None, 2),
+        (Piece::T, Rotation::East, Spin::None, 3),
+        (Piece::I, Rotation::East, Spin::None, 4),
+        (Piece::T, Rotation::East, Spin::Full, 3),
+    ] {
+        let cells = get_piece_cells(piece, rotation);
+        let x = -cells.iter().map(|c| c.x).min().unwrap();
+        let y = -cells.iter().map(|c| c.y).min().unwrap();
+        let mut board = Board::new(4);
+        board.rows[..lines].fill(15);
+        for c in cells {
+            board.rows[(y + c.y) as usize] &= !(1 << (x + c.x));
+        }
+        let mut m = Move::new(piece, rotation, x, y);
+        m.spin = spin;
+        for previous in [0, 1, 20] {
+            for bonus in [0, 5] {
+                let mut solo = GameState::from_triangle(
+                    board,
+                    piece,
+                    None,
+                    vec![Piece::O],
+                    0,
+                    previous > 0,
+                    0,
+                );
+                solo.b2b_level = previous;
+                solo.b2b_charge = if previous >= 4 { previous } else { 0 };
+                solo.pc_bonus = bonus;
+                let mut battle = solo.clone();
+                let mut opponent = GameState::new(4);
+                assert_eq!(solo.do_move(m), lines as u32);
+                let (cleared, attack) = battle.do_move_battle(m, &mut opponent);
+                assert_eq!(cleared, lines as u32);
+                for s in [&solo, &battle] {
+                    assert!(s.last_perfect_clear && s.b2b);
+                    assert_eq!(s.perfect_clears, 1);
+                    assert_eq!(s.b2b_level, previous + 1, "{piece:?} {spin:?}");
+                }
+                assert_eq!(attack, solo.last_attack);
+                if lines == 2 && previous == 20 {
+                    // Existing B2B continues; its charge is not cashed out as a break.
+                    assert_eq!(attack, 4 + bonus);
+                }
+            }
+        }
+    }
 }

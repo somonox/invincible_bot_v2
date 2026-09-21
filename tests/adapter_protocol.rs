@@ -86,12 +86,12 @@ fn funny_mode_reaches_b2b_policy_and_overrides_conflicting_expert_flag() {
         assert_eq!(m["keys"].as_array().unwrap().last().unwrap(), "hardDrop");
         if funny {
             assert_eq!(m["data"]["strategy"], "Funny B2B: build and preserve");
-            // Keep B2B with a setup placement even when breaking it would give a huge PC.
-            assert_eq!(m["data"]["expectedAttack"], 0);
         } else {
             assert_eq!(m["data"]["strategy"], "PC in 1 placements");
-            assert!(m["data"]["expectedAttack"].as_f64().unwrap() >= 1000.0);
         }
+        // PC now increases B2B, so both policies complete the same empty field.
+        assert!(m["data"]["expectedAttack"].as_f64().unwrap() >= 1000.0);
+        assert_eq!(m["keys"], moves[0]["keys"]);
     }
 }
 

@@ -199,7 +199,13 @@ impl GameState {
             self.combo = 0;
             return 0;
         }
-        let eligible = cleared >= 4 || spin != Spin::None;
+        // The board has already been cleared. A PC contributes one B2B step,
+        // including ordinary line clears; spin/quad PCs must not count twice.
+        self.last_perfect_clear = self.board.highest_row() == 0;
+        if self.last_perfect_clear {
+            self.perfect_clears += 1;
+        }
+        let eligible = cleared >= 4 || spin != Spin::None || self.last_perfect_clear;
         let previous_b2b = self.b2b;
         let mut surge = 0;
         if eligible {
@@ -272,7 +278,13 @@ impl GameState {
         self.score += self.combo * 50;
         self.combo += 1;
         self.lines_cleared += cleared;
-        attack.floor() as u32 + surge
+        attack.floor() as u32
+            + surge
+            + if self.last_perfect_clear {
+                self.pc_bonus
+            } else {
+                0
+            }
     }
 
     pub fn refill_bag_if_needed(&mut self) {
@@ -429,14 +441,7 @@ impl GameState {
         // Clear lines
         let cleared = self.board.clear_lines();
 
-        let mut attack_sent = self.score_clear(cleared, m.spin, m.piece);
-
-        // Check for Perfect Clear
-        if self.board.highest_row() == 0 && cleared > 0 {
-            self.last_perfect_clear = true;
-            self.perfect_clears += 1;
-            attack_sent += self.pc_bonus;
-        }
+        let attack_sent = self.score_clear(cleared, m.spin, m.piece);
 
         // Cancel all known packets, including those that have not arrived yet.
         // Only ready packets rise on a non-clear. Taking garbage is not cancellation.
@@ -500,14 +505,6 @@ impl GameState {
 
         let was_b2b_active = self.b2b;
         let mut attack_sent = self.score_clear(cleared, m.spin, m.piece);
-
-        // Apply the same perfect-clear bonus as the search/single-player engine,
-        // before cancellation and before sending the remaining attack.
-        if cleared > 0 && self.board.highest_row() == 0 {
-            self.last_perfect_clear = true;
-            self.perfect_clears += 1;
-            attack_sent += self.pc_bonus;
-        }
 
         self.pieces_placed += 1;
 

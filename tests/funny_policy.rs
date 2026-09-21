@@ -24,7 +24,7 @@ fn position(rows: &[u16], current: Piece, hold: Piece) -> GameState {
 }
 
 #[test]
-fn funny_preserves_b2b_instead_of_taking_a_high_damage_pc() {
+fn funny_takes_a_pc_as_b2b_progress_and_a_clean_field() {
     let state = position(&[3, 3], Piece::O, Piece::T);
     let weights = Weights::default();
     let funny = find_funny_move(&state, None, Evaluator::Static(&weights), 1).unwrap();
@@ -41,10 +41,11 @@ fn funny_preserves_b2b_instead_of_taking_a_high_damage_pc() {
         .find(|(_, m, h)| (*m, *h) == normal.choice)
         .unwrap()
         .0;
-    assert!(normal.last_perfect_clear && !normal.b2b);
+    assert!(normal.last_perfect_clear && normal.b2b);
     assert!(selected.b2b && !selected.game_over);
-    assert_eq!(selected.b2b_level, 20); // A setup preserves, but never grows, B2B.
-    assert_eq!(selected.lines_cleared, 0);
+    assert!(selected.last_perfect_clear);
+    assert_eq!(selected.b2b_level, 21);
+    assert_eq!(selected.lines_cleared, 2);
     assert!(matches!(
         funny.mode,
         HybridMode::FunnyB2b { defending: false }
@@ -65,7 +66,7 @@ fn funny_takes_an_available_b2b_clear_rather_than_only_stacking() {
 }
 
 #[test]
-fn funny_can_break_b2b_to_avoid_receiving_ready_garbage() {
+fn funny_cancels_ready_garbage_with_a_b2b_increasing_pc() {
     let mut state = position(&[3, 3], Piece::O, Piece::T);
     state.pending_garbage = 8;
     let plan = find_funny_move(&state, None, Evaluator::Static(&Weights::default()), 1).unwrap();
@@ -77,10 +78,28 @@ fn funny_can_break_b2b_to_avoid_receiving_ready_garbage() {
     assert_eq!(next.last_received_garbage, 0);
     assert_eq!(next.last_canceled_garbage, 8);
     assert!(next.last_perfect_clear);
+    assert_eq!(next.b2b_level, 21);
     assert!(matches!(
         plan.mode,
         HybridMode::FunnyB2b { defending: true }
     ));
+}
+
+#[test]
+fn funny_still_preserves_b2b_when_an_ordinary_clear_is_not_a_pc() {
+    let state = position(&[3, 3, 1], Piece::O, Piece::T);
+    let plan = find_funny_move(&state, None, Evaluator::Static(&Weights::default()), 1).unwrap();
+    let candidates = get_all_next_states(&state);
+    assert!(candidates
+        .iter()
+        .any(|(s, _, _)| s.lines_cleared > 0 && !s.last_perfect_clear && !s.b2b));
+    let next = &candidates
+        .iter()
+        .find(|(_, m, h)| (*m, *h) == plan.choice)
+        .unwrap()
+        .0;
+    assert!(next.b2b && !next.game_over);
+    assert_eq!(next.b2b_level, 20);
 }
 
 #[test]
