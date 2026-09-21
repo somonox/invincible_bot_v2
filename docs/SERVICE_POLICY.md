@@ -33,7 +33,16 @@ variants, remain approximations described in [rule limitations](TETRIO_RULES.md)
   excess pressure throughout the path, then at its end, then received garbage.
   Within that safe space, fewer B2B breaks wins. Next, jointly score the final
   board and B2B progress: board quality + 12 points per B2B level, with combo
-  and fixed PC rewards removed. One extra spin cannot outweigh arbitrarily bad
+  and fixed PC rewards removed, minus recovery costs along the planned path.
+  Each placement adds its remaining holes and blocks covering holes to a small
+  elapsed cost and a larger outstanding cost. A clear repays the outstanding
+  cost in proportion to the obstruction actually removed. Removing all holes
+  repays it fully; a spin that leaves the roof buried does not. This allows a
+  roof followed by executable spin recovery, while charging for carrying it
+  longer and for the structure left after clearing. The elapsed cost remains
+  after repayment, so postponing the same recovery is not free. Costs are
+  computed within the visible preview, not a timer or fixed setup-piece cap.
+  One extra spin cannot outweigh arbitrarily bad
   holes/coveredness; a clean non-clearing setup can win instead. Ties favor B2B
   level, board quality and attack. The executable fallback uses this same tradeoff.
   Dangerous stacking yields to ordinary clears even

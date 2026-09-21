@@ -57,9 +57,12 @@ pub enum Evaluator<'a> {
 impl Evaluator<'_> {
     /// The executable fallback uses the same B2B/field tradeoff as the beam.
     pub fn funny_position_value(&self, state: &GameState) -> f64 {
-        funny_value(
+        let debt = funny_recovery_debt(state);
+        funny_path_value(
             self.score(state, None, Objective::FunnyB2b),
             state.b2b_level,
+            debt,
+            debt,
         )
     }
 
@@ -92,6 +95,29 @@ fn funny_value(quality: f32, b2b_level: u32) -> f64 {
     quality as f64 + 12.0 * b2b_level as f64
 }
 
+fn funny_path_value(quality: f32, b2b_level: u32, exposure: u32, unpaid: u32) -> f64 {
+    funny_value(quality, b2b_level) - 0.125 * exposure as f64 - 0.75 * unpaid as f64
+}
+
+/// A roof is allowed, but leaving holes covered for more placements costs time.
+/// Evaluate after line removal: a completed spin/PC repays its structure cost.
+fn funny_recovery_debt(state: &GameState) -> u32 {
+    state.board.holes_count() + state.board.cell_coveredness()
+}
+
+fn remaining_recovery_cost(previous: &GameState, next: &GameState, carried: u32) -> u32 {
+    let before = funny_recovery_debt(previous);
+    let after = funny_recovery_debt(next);
+    // Repay only the fraction of obstruction actually removed. A cheap spin
+    // that leaves the roof intact does not erase its accumulated setup cost.
+    let unpaid = if next.combo > 0 && after < before {
+        carried * after / before
+    } else {
+        carried
+    };
+    unpaid + after
+}
+
 #[derive(Clone)]
 struct Node {
     state: GameState,
@@ -102,6 +128,8 @@ struct Node {
     b2b_breaks: usize,
     funny_risk: usize,
     peak_funny_risk: usize,
+    recovery_exposure: u32,
+    unrecovered_exposure: u32,
     clears: usize,
     perfect_clears: usize,
     quality: f32,
@@ -148,7 +176,14 @@ impl Node {
                     // A cheap spin that buries holes is not free B2B progress.
                     // Trade one more eligible clear against the resulting field,
                     // so setup for a sustainable next cycle can beat a quick spin.
-                    let value = |n: &Self| funny_value(n.quality, n.state.b2b_level);
+                    let value = |n: &Self| {
+                        funny_path_value(
+                            n.quality,
+                            n.state.b2b_level,
+                            n.recovery_exposure,
+                            n.unrecovered_exposure,
+                        )
+                    };
                     value(self).total_cmp(&value(other))
                 })
                 .then(self.state.b2b_level.cmp(&other.state.b2b_level))
@@ -574,6 +609,16 @@ fn search_with_root(
             0
         };
         frontier.push(Node {
+            unrecovered_exposure: if objective == Objective::FunnyB2b {
+                funny_recovery_debt(&next)
+            } else {
+                0
+            },
+            recovery_exposure: if objective == Objective::FunnyB2b {
+                funny_recovery_debt(&next)
+            } else {
+                0
+            },
             funny_risk,
             peak_funny_risk: funny_risk,
             b2b_breaks: usize::from(state.b2b && !next.b2b),
@@ -624,6 +669,17 @@ fn search_with_root(
                     0
                 };
                 let mut candidate = Node {
+                    unrecovered_exposure: if objective == Objective::FunnyB2b {
+                        remaining_recovery_cost(&node.state, &next, node.unrecovered_exposure)
+                    } else {
+                        0
+                    },
+                    recovery_exposure: node.recovery_exposure
+                        + if objective == Objective::FunnyB2b {
+                            funny_recovery_debt(&next)
+                        } else {
+                            0
+                        },
                     funny_risk,
                     peak_funny_risk: node.peak_funny_risk.max(funny_risk),
                     b2b_breaks: node.b2b_breaks + usize::from(node.state.b2b && !next.b2b),
@@ -646,6 +702,9 @@ fn search_with_root(
                 };
                 let key = Key::of(&candidate);
                 if let Some(&index) = seen.get(&key) {
+                    // As with beam truncation, retain the best history at this
+                    // horizon. Recovery costs are ranked here, not used as a
+                    // geometry key that would crowd the beam with duplicate boards.
                     candidate.quality = next_layer[index].quality;
                     if candidate.compare(&next_layer[index], objective) == Ordering::Greater {
                         next_layer[index] = candidate;
@@ -684,6 +743,62 @@ fn search_with_root(
 #[cfg(test)]
 mod selection_tests {
     use super::*;
+    #[test]
+    fn recovery_cost_is_repaid_by_removing_the_roof_not_merely_scoring_a_spin() {
+        use crate::engine::{
+            board::Board,
+            header::{Rotation, Spin, SpinMode},
+        };
+        let mut board = Board::new(4);
+        board.spawn_height = 26;
+        board.rows[..3].copy_from_slice(&[7, 7, 3]);
+        let mut start = GameState::from_triangle(
+            board,
+            Piece::J,
+            Some(Piece::T),
+            vec![Piece::S, Piece::Z, Piece::I, Piece::O, Piece::T],
+            1,
+            false,
+            0,
+        );
+        start.spin_mode = SpinMode::Handheld;
+        let advance = |state: &GameState, piece, rotation, x, y, spin| {
+            get_input_next_states(state)
+                .into_iter()
+                .find(|(_, m, _)| {
+                    (m.piece, m.rotation, m.x, m.y, m.spin) == (piece, rotation, x, y, spin)
+                })
+                .expect("fixture move is executable")
+                .0
+        };
+        let roof = advance(&start, Piece::T, Rotation::South, 2, 3, Spin::None);
+        let cost = remaining_recovery_cost(&start, &roof, 0);
+        assert!(cost > 0);
+        let stacked = get_input_next_states(&roof)
+            .into_iter()
+            .map(|(s, _, _)| s)
+            .find(|s| {
+                !s.game_over && s.combo == 0 && funny_recovery_debt(s) >= funny_recovery_debt(&roof)
+            })
+            .unwrap();
+        assert!(remaining_recovery_cost(&roof, &stacked, cost) > cost);
+        let spin = advance(&roof, Piece::J, Rotation::East, 0, 4, Spin::Full);
+        let spin_cost = remaining_recovery_cost(&roof, &spin, cost);
+        assert!(spin.combo > 0 && spin.b2b);
+        assert!(funny_recovery_debt(&spin) > 0);
+        assert!(
+            spin_cost > 0,
+            "a spin leaving obstruction is not full repayment"
+        );
+        let recovered = advance(&spin, Piece::S, Rotation::South, 2, 4, Spin::Full);
+        assert!(recovered.combo > 0 && recovered.b2b);
+        assert_eq!(funny_recovery_debt(&recovered), 0);
+        assert_eq!(remaining_recovery_cost(&spin, &recovered, spin_cost), 0);
+        // Repayment removes the large outstanding cost; the small elapsed cost
+        // still favors finishing earlier over postponing an identical recovery.
+        assert!(funny_path_value(0.0, 2, cost, 0) > funny_path_value(0.0, 2, cost * 2, 0));
+    }
+
     #[test]
     fn expert_switch_gates_the_table_without_changing_the_normal_beam() {
         use crate::engine::{board::Board, header::ALL_PIECES};
@@ -765,6 +880,8 @@ mod selection_tests {
         for all_tied in [false, true] {
             let nodes: Vec<Node> = (0..256)
                 .map(|i| Node {
+                    unrecovered_exposure: if all_tied { 0 } else { i as u32 % 11 },
+                    recovery_exposure: if all_tied { 0 } else { i as u32 % 7 },
                     funny_risk: if all_tied { 0 } else { i as usize % 4 },
                     peak_funny_risk: if all_tied { 0 } else { i as usize % 4 },
                     b2b_breaks: if all_tied { 0 } else { i as usize % 3 },

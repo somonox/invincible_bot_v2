@@ -182,3 +182,42 @@ fn funny_prefers_a_clean_setup_over_a_spin_that_buries_more_holes() {
             && evaluator.funny_position_value(selected) > evaluator.funny_position_value(next)
     }));
 }
+
+#[test]
+fn funny_builds_a_roof_then_recovers_it_with_executable_spins() {
+    use four_wide_bot::engine::movegen::find_input_path;
+    let mut state = position(&[7, 7, 3], Piece::J, Piece::T);
+    state.spin_mode = SpinMode::Handheld;
+    state.pc_bonus = 5;
+    state.combo = 1;
+    state.b2b = false;
+    state.b2b_level = 0;
+    state.b2b_charge = 0;
+    state.queue = vec![Piece::S, Piece::Z, Piece::I, Piece::O, Piece::T];
+    let weights = Weights::default();
+    assert_eq!(state.board.holes_count(), 0);
+    for turn in 0..3 {
+        let choice = find_funny_move(&state, None, Evaluator::Static(&weights), 6)
+            .unwrap()
+            .choice;
+        assert!(find_input_path(&state.board, choice.0, state.spin_mode).is_some());
+        if choice.1 {
+            assert!(state.hold());
+        }
+        state.do_move(choice.0);
+        assert!(!state.game_over);
+        if turn == 0 {
+            assert_eq!(state.combo, 0, "the useful roof starts with a non-clear");
+            assert!(
+                state.board.holes_count() > 0,
+                "do not ban deliberate overhangs"
+            );
+        }
+    }
+    assert_eq!(state.board.holes_count(), 0);
+    assert_eq!(state.board.cell_coveredness(), 0);
+    assert!(
+        state.b2b_level >= 2,
+        "the roof must pay back through actual B2B clears"
+    );
+}

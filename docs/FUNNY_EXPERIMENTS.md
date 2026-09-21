@@ -83,3 +83,60 @@ release passed 24 input-reachability, Funny, protocol and rule tests. Separate
 ARM seeds `2 300 handheld 8 700 executable` reached 600/600 placements with zero
 unreachable plans, mean total decision time 10.07/10.24 ms and p99 search time
 13.21/13.00 ms. These are single-worker timings, not a concurrency/load test.
+
+## Roof recovery evaluation
+
+Baseline `2f347c3`. Funny now evaluates both the finished board and the time
+spent carrying obstruction on the path to it. After each placement, let
+`D = holes_count + cell_coveredness` (the latter counts occupied blocks above
+an empty cell). Accumulate `E += D`. Also maintain outstanding cost `U`:
+when a line clear reduces D, repay the corresponding fraction of the previous
+U (`floor(U * D_after / D_before)`), then add D_after. Otherwise add D_after
+without repayment. Rank field/B2B value minus `0.125 * E + 0.75 * U`.
+
+A useful roof can be repaid by its later spin/PC. A spin alone is not proof of
+recovery: residual obstruction retains cost, and the final field still receives
+the ordinary quality evaluation. The smaller elapsed component survives
+repayment to discourage postponing an otherwise identical recovery. Both costs
+start at zero for each search; this is a five/six-placement preview heuristic,
+not persistent cross-turn history, a ban on overhangs or a fixed stacking limit.
+Search still uses a 64-node beam and keeps the best currently ranked history
+per equal state; it does not preserve every cost-history tradeoff. Safety,
+garbage receipt and B2B-break priorities precede these soft costs. The executable
+fallback uses the corresponding one-placement cost. Normal and Expert do not
+accumulate or compare these costs.
+
+Matched deterministic comparisons (PC bonus 5, SRS-X, 4x26, executable inputs):
+
+| Arguments | Version | B2B breaks | B2B clears | Attack | Obstruction sum | Height sum |
+| --- | --- | --- | --- | --- | --- | --- |
+| `4 300 handheld 6 800 executable` | Before | 10 | 609 | 4932 | 6560 | 6150 |
+| same | After | 5 | 620 | 5220 | 4008 | 5475 |
+| `4 300 all 8 900 executable` | Before | 24 | 501 | 4371 | 5516 | 6470 |
+| same | After | 26 | 476 | 3982 | 4152 | 6389 |
+| `4 300 all 0 1000 executable` | Before | 14 | 489 | 4417 | 7841 | 7842 |
+| same | After | 14 | 523 | 4544 | 4613 | 6976 |
+| `4 500 handheld 8 1100 executable` (separate seeds) | Before | 31 | 966 | 7605 | 12074 | 10677 |
+| same | After | 34 | 953 | 7141 | 8625 | 10611 |
+
+All 16 games per version reached their caps (5600 placements), with no
+unreachable plans. Aggregate obstruction sum fell 33.1%, height sum fell 5.4%,
+B2B breaks stayed at 79, and attack fell 2.1%. Strong garbage cases regressed
+in attack/B2B breaks despite less obstruction, so this is a recovery/stacking
+tradeoff, not an across-the-board strength or online win-rate improvement.
+Maximum non-clearing streaks also did not consistently fall: useful setups
+remain allowed. Raw results are `benchmarks/roof-{before,after}-*.jsonl`.
+
+Regression fixture: rows `[7,7,3]`, current J, hold T, preview S/Z/I/O/T,
+handheld spins. The selected T overhang creates holes, then executable J and S
+spins remove the obstruction and leave a clean four-row tetris well. Tests also
+verify that an intervening spin leaving obstruction only partially repays cost,
+continued stacking increases it, and a recovered roof still retains the small
+time cost. Existing PC, emergency downstack and buried-hole avoidance tests stay
+in force.
+
+Validation: Windows `cargo test --all-targets` passed. ARM native/thin-LTO
+release passed the library, adapter, Funny, input-reachability and protocol
+tests. Independent ARM seeds `2 300 handheld 8 1300 executable` reached their
+caps with zero unreachable moves, mean decision times 10.76/10.56 ms and p99
+search times 14.06/13.90 ms. This is a single-worker test, not a load benchmark.
